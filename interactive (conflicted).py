@@ -70,7 +70,7 @@ led_radius     = agent_radius
 # 天上天下唯我独尊モード用パラメータ（グローバル初期値）
 # ========================================================
 # groupA_count     = 1                   # A グループの台数（残りは B）
-sine_freq   = 0.1                 # 正弦波の周波数 [Hz]
+sine_freq   = 0.3                 # 正弦波の周波数 [Hz]
 sine_amp   = (maxZ - minZ) / 4   # 正弦波の振幅
 color_speed      = 0.03                 # LED 色変化の速度
 
@@ -178,7 +178,7 @@ ceiling = box(canvas=scene3d,
 # UI（下段にまとめる）
 # ========================================================
 ui = canvas(
-    width=500, height=400,
+    width=1, height=0,
     background=color.white,
     caption="",
     align='left'
@@ -792,7 +792,7 @@ current_groupA_idx = random.randrange(len(agents))
 prev_z_diff       = None
 epsilon           = 0.05   # 高さ差トリガーの許容幅
 # ─── イージング速度 ───────────────────────────────
-ease_speed = 1.0   # 大きいほど速く追従（0.0～10.0 くらいが調整幅の目安）
+ease_speed = 3.0   # 大きいほど速く追従（0.0～10.0 くらいが調整幅の目安）
 ease_color_speed = 1.0   # 1秒でどれだけ追いつくか（大きいほど速い）
 
 # 補助関数：frange（任意の間隔でグリッドサーチ）
