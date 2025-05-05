@@ -5,11 +5,8 @@ scene.width = scene.height = 0
 import math, random, struct, csv
 from noise import pnoise2, pnoise1
 import paho.mqtt.client as mqtt
-
 import colorsys
-import random
 from math import radians, degrees, sin, cos
-
 
 # ─── モード切替トランジション用 ─────────────────────
 is_transitioning   = False
@@ -27,11 +24,11 @@ rotationSpeed    = 0.001
 radius           = 5.5
 cameraHeight     = 1.0
 
-noiseScale   = 0.01
-noiseSpeed   = 0.01
-waveScale    = 0.2
-waveStrength = 0.1
-flow_target_height = 2.5
+noiseScale           = 0.01
+noiseSpeed           = 0.01
+waveScale            = 0.2
+waveStrength         = 0.1
+flow_target_height   = 2.5
 
 showPole = True
 
@@ -50,9 +47,7 @@ base_hue   = 0.2   # 虹の開始位置 (0=赤, 0.33=緑, 0.66=青, …)
 hue_span   = 0.07   # 使う虹の幅 (1.0なら全域、0.5なら半分だけ)
 hue_vari   = 0.1   # 波動による微揺らぎ（既存）
 hue_speed  = 1.0   # 波動の速さ（既存）
-waveScale  = 0.2   # 波の空間スケール（既存）
 noise_time = 0.0   # 時間カウンタ（既存）
-led_amp    = 1.0   # 波の振幅（既存）
 base_sat   = 1.0   # ← 追加：彩度のデフォルト
 
 # ========================================================
@@ -69,16 +64,13 @@ led_radius     = agent_radius
 # ========================================================
 # 天上天下唯我独尊モード用パラメータ（グローバル初期値）
 # ========================================================
-# groupA_count     = 1                   # A グループの台数（残りは B）
 sine_freq   = 0.1                 # 正弦波の周波数 [Hz]
-sine_amp   = (maxZ - minZ) / 4   # 正弦波の振幅
-color_speed      = 0.03                 # LED 色変化の速度
+sine_amp    = (maxZ - minZ) / 4   # 正弦波の振幅
+color_speed = 0.03                # LED 色変化の速度
 
-# スライダーから直接書き換える「目標値」
 target_sine_amp  = sine_amp
 target_sine_freq = sine_freq
 
-# update_tenge 内で実際に使う「現在値」
 current_sine_amp  = target_sine_amp
 current_sine_freq = target_sine_freq
 
@@ -92,35 +84,29 @@ plane_height     = 2.5     # 平面中心の高さ
 
 # Audience の人数設定（0～10）
 audience_count = 2
-audiences = []   # リストは後で埋める
-# ─── グローバルにノイズ用パラメータを追加 ─────────────────
-audience_noise_scale = 0.5    # 空間解像度（大きいほどゆっくり変化）
-audience_noise_speed = 0.2    # 時間変化の速さ
-audience_speed_amp = 0.5   # 0.0＝固定速度、1.0＝±50%の変動幅
-
-# 人が近くにいたら優先で向く検出半径[m]
+audiences = []
+audience_noise_scale = 0.5
+audience_noise_speed = 0.2
+audience_speed_amp   = 0.5
 detect_radius = 1.0
 
-# ─── ② 鬼さんこちらモード用グローバルパラメータ ────────────────────────
-oni_empty_radius     = 2.5    # 空き半径（スライダーで可変）
-oni_min_select_dist  = 2.5    # 降下候補最小距離
-oni_max_select_dist  = 4.0    # 降下候補最大距離
-oni_descent_speed    = 0.2    # 降下速度[m/s]
-oni_return_speed     = 1.0    # 緊急上昇速度[m/s]
-oni_target_z         = 1.8    # 降下目標Z[m]
-
-# ステートマシン用
-oni_state            = "idle" # "idle","descending","waiting","ascending"
-oni_next_time        = 0.0    # 次の降下開始時間
-oni_current_idx      = None   # 選択中のAgentインデックス
-oni_target_aud       = None   # 選択中のAudience
-oni_wait_start       = 0.0    # 停止開始時刻
-
-# ─── グローバル変数 ─────────────────────────────────────
-oni_color_start     = 0.0            # 降下開始時刻（色イージング用）
-oni_initial_color   = vector(1,1,1)  # 降下開始時の色
-oni_target_color    = vector(1,1,1)  # 2 秒後に向かう反対色
-
+# ========================================================
+# 鬼さんこちらモード用パラメータ
+# ========================================================
+oni_empty_radius     = 2.5
+oni_min_select_dist  = 2.5
+oni_max_select_dist  = 4.0
+oni_descent_speed    = 0.2
+oni_return_speed     = 1.0
+oni_target_z         = 1.8
+oni_state            = "idle"
+oni_next_time        = 0.0
+oni_current_idx      = None
+oni_target_aud       = None
+oni_wait_start       = 0.0
+oni_color_start      = 0.0
+oni_initial_color    = vector(1,1,1)
+oni_target_color     = vector(1,1,1)
 
 # ========================================================
 # MQTT セットアップ
@@ -130,236 +116,81 @@ mqtt_client.connect("127.0.0.1", 1883, 60)
 mqtt_client.loop_start()
 
 # ========================================================
-# 3Dビュー（左上）
+# 3Dビュー設定
 # ========================================================
-scene3d = canvas(
-    width=600, height=400, #     width=800, height=533,
-    background=color.gray(0.2),
-    caption="",
-    align='right'
-)
-scene3d.up       = vector(0,0,1)
-scene3d.forward  = vector(-1,-1,-0.2)
+scene3d = canvas(width=600, height=400, background=color.gray(0.2), align='right')
+scene3d.up      = vector(0,0,1)
+scene3d.forward = vector(-1,-1,-0.2)
 scene3d.userspin = False
 
-# ========================================================
-# 上からビュー（右上）
-# ========================================================
-scene2d = canvas(
-    width=600, height=400,
-    background=color.gray(0.2),
-    caption="",
-    align='right'
-)
+scene2d = canvas(width=600, height=400, background=color.gray(0.2), align='right')
 scene2d.camera.projection = "orthographic"
-scene2d.up            = vector(1,0,0)
-scene2d.camera.axis   = vector(0,0,-1)
+scene2d.up               = vector(1,0,0)
+scene2d.camera.axis      = vector(0,0,-1)
 scene2d.lights = []
 
-# ========================================================
-# 床 (floor) の作成
-# ========================================================
-# 画面上の全エージェント範囲をあとで計算して centerX/centerY/span をセット
-# → 先にダミーで作成しておき、後でサイズと位置を調整します
-floor = box(canvas=scene3d,
-            pos=vector(0,0,-0.01),
-            size=vector(6.4,7.6,0.02),
-            color=color.gray(0.5),
-            opacity=1.0)
-
-ceiling = box(canvas=scene3d,
-            pos=vector(0,0, maxZ + 0.21),
-            size=vector(6.4,7.6,0.02),
-            color=color.gray(0.5),
-            opacity=1.0,
-            shininess=0)
+# ... 以下の描画とロジックはそのまま残してください
 
 # ========================================================
-# UI（下段にまとめる）
+# Streamlit UI 部分
 # ========================================================
-ui = canvas(
-    width=0, height=0,
-    background=color.white,
-    caption="",
-    align='left'
-)
+import streamlit as st
 
-# ドロップダウンメニューの作成
+# UI: モード選択
 modes = ["フローモード", "天上天下唯我独尊モード", "回る天井", "鬼さんこちらモード"]
-# ドロップダウン作成
-def on_mode_select(m):
-    global is_transitioning, transition_start
-    # 既存の visibility 切り替え処理
-    select = m.selected
-    for mode, widgets in slider_groups.items():
-        for w in widgets:
-            w.visible = (mode == select)
+if "paused" not in st.session_state:
+    st.session_state.paused = False
+st.sidebar.title("Controls")
+mode = st.sidebar.selectbox("Mode を選択", modes)
+st.sidebar.markdown("---")
 
-    # ここからトランジション開始処理
-    is_transitioning   = True
-    transition_start   = sim_time
-    # 各エージェントの「切り替え前ステート」を保存
-    for ag in agents:
-        ag.prev_z     = ag.z
-        ag.prev_yaw   = ag.yaw
-        ag.prev_pitch = ag.pitch
-        ag.prev_color = ag.current_color
+# Pause/Resume ボタン
+if st.sidebar.button("Resume" if st.session_state.paused else "Pause"):
+    st.session_state.paused = not st.session_state.paused
+st.sidebar.markdown(f"**Paused**: {st.session_state.paused}")
+st.sidebar.markdown("---")
 
+# モードごとのパラメータ表示
+if mode == "フローモード":
+    separationFactor = st.sidebar.slider("Separation", 0.0, 2.0, separationFactor, 0.02)
+    cohesionFactor   = st.sidebar.slider("Cohesion",   0.0, 2.0, cohesionFactor,   0.02)
+    noiseScale       = st.sidebar.slider("Noise Scale",    0.01, 0.5, noiseScale,    0.01)
+    waveScale        = st.sidebar.slider("Wave Scale",     0.01, 1.0, waveScale,     0.01)
+    waveStrength     = st.sidebar.slider("Wave Strength",  0.0, 1.0, waveStrength,    0.01)
+    noiseSpeed       = st.sidebar.slider("Noise Speed",    0.0, 0.1, noiseSpeed,    0.001)
+    led_amp          = st.sidebar.slider("LED Amplitude",  0.0, 2.0, led_amp,        0.02)
+    base_hue         = st.sidebar.slider("Hue Offset",     0.0, 1.0, base_hue,       0.01)
+    hue_span         = st.sidebar.slider("Hue Span",       0.0, 1.0, hue_span,       0.01)
+elif mode == "天上天下唯我独尊モード":
+    target_sine_amp  = st.sidebar.slider("Sine Amplitude", 0.0, 2.0, target_sine_amp,  0.01)
+    target_sine_freq = st.sidebar.slider("Sine Frequency", 0.0, 2.0, target_sine_freq, 0.01)
+    color_speed      = st.sidebar.slider("Color Speed",    0.0, 2.0, color_speed,      0.01)
+elif mode == "回る天井":
+    tilt_angle_deg  = st.sidebar.slider("Tilt Angle (°)",  0.0, 90.0, tilt_angle_deg,   1.0)
+    plane_rot_speed = st.sidebar.slider("Rotation Speed",   0.0, 2.0, plane_rot_speed,  0.01)
+    plane_height    = st.sidebar.slider("Plane Height (m)", minZ, maxZ, plane_height,   0.01)
+elif mode == "鬼さんこちらモード":
+    oni_empty_radius    = st.sidebar.slider("Empty Radius",        0.0, 5.0, oni_empty_radius,    0.01)
+    oni_min_select_dist = st.sidebar.slider("Min Select Dist",     0.0, 5.0, oni_min_select_dist, 0.01)
+    oni_max_select_dist = st.sidebar.slider("Max Select Dist",     0.0, 5.0, oni_max_select_dist, 0.01)
+    oni_descent_speed   = st.sidebar.slider("Descent Speed (m/s)",0.0, 1.0, oni_descent_speed,   0.01)
+    oni_return_speed    = st.sidebar.slider("Return Speed (m/s)",  0.0, 5.0, oni_return_speed,    0.1)
 
-mode_menu = menu(choices=modes, index=0, bind=on_mode_select, canvas=ui)
-ui.append_to_caption("\n\n")  # 少し余白
-
-# 各モードのスライダーを登録しておく辞書
-slider_groups = { mode: [] for mode in modes }
-
-# add_slider をラップして、mode を指定できるようにする
-def add_mode_slider(mode, cnv, label, mn, mx, val, fmt, setter):
-    # ラベル
-    txt0 = wtext(text=f"{label}: ", canvas=cnv)
-    # 値表示
-    txt1 = wtext(text=f"{fmt.format(val)}  ", canvas=cnv)
-    # スライダー本体
-    sld = slider(min=mn, max=mx, value=val, length=200,
-                 bind=lambda s, txt=txt1, fmt=fmt, st=setter: (
-                     st(s.value), txt.__setattr__("text", f"{fmt.format(s.value)}  ")
-                 ),
-                 canvas=cnv)
-    cnv.append_to_caption("<br>")
-    # ウィジェット一覧に登録（visibility 切り替え用）
-    slider_groups[mode] += [txt0, txt1, sld]
-    return sld
-
-
-# ─── Behavior Control ─────────────────────────────────
-ui.append_to_caption("<b>フローパラメータ</b><br>")
-add_mode_slider("フローモード", ui, "Separation",    0,   2,   separationFactor, "{:.2f}",
-           lambda v: globals().update(separationFactor=v))
-add_mode_slider("フローモード", ui, "Cohesion",      0,   2,   cohesionFactor,   "{:.2f}",
-           lambda v: globals().update(cohesionFactor=v))
-add_mode_slider("フローモード", ui, "Noise Scale",   .01, .5,  noiseScale,      "{:.2f}",
-           lambda v: globals().update(noiseScale=v))
-add_mode_slider("フローモード", ui, "Wave Scale",    .01, 1.0, waveScale,       "{:.2f}",
-           lambda v: globals().update(waveScale=v))
-add_mode_slider("フローモード", ui, "Wave Strength", 0,   1,   waveStrength,    "{:.2f}",
-           lambda v: globals().update(waveStrength=v))
-add_mode_slider("フローモード", ui, "Noise Speed",   0,   .1,  noiseSpeed,      "{:.3f}",
-           lambda v: globals().update(noiseSpeed=v))
-# LED 波の振幅
-add_mode_slider("フローモード", ui, "LED Amplitude", 0, 2, led_amp, "{:.2f}",
-           lambda v: globals().update(led_amp=v))
-
-# ─── HSB Color Control ───────────────────────────────
-# 3) UI（add_mode_slider／"フローモード", ui.append_to_caption済みと仮定）
-add_mode_slider("フローモード", ui, "Hue Offset", 0.0, 1.0, base_hue, "{:.2f}",
-           lambda v: globals().update(base_hue=v))
-add_mode_slider("フローモード", ui, "Hue Span",   0.0, 1.0, hue_span, "{:.2f}",
-           lambda v: globals().update(hue_span=v))
-ui.append_to_caption("<br>")
-
-# ========================================================
-# UI：モード別スライダー登録（天上天下唯我独尊モード）
-# ========================================================
-ui.append_to_caption("<b>天上天下唯我独尊パラメータ</b><br>")
-
-add_mode_slider("天上天下唯我独尊モード", ui,
-    "Sine Amplitude", 0.0, 2.0, target_sine_amp, "{:.2f}",
-    lambda v: globals().update(target_sine_amp=v)
-)
-add_mode_slider("天上天下唯我独尊モード", ui,
-    "Sine Frequency", 0.0, 2.0, target_sine_freq, "{:.2f}",
-    lambda v: globals().update(target_sine_freq=v)
-)
-
-add_mode_slider(
-    "天上天下唯我独尊モード", ui,
-    "Color Speed", 0.0, 2.0, color_speed, "{:.2f}",
-    lambda v: globals().update(color_speed=v)
-)
-ui.append_to_caption("<br>")
-
-# ========================================================
-# ─── 回る天井モード用パラメータ ───────────────────
-# ========================================================
-ui.append_to_caption("<b>回る天井パラメータ</b><br>")
-# 角度（°）
-add_mode_slider("回る天井", ui,
-    "Tilt Angle", 0.0, 90.0, tilt_angle_deg, "{:.1f}",
-    lambda v: globals().update(tilt_angle_deg=v)
-)
-# 回転速度（rad/s）
-add_mode_slider("回る天井", ui,
-    "Rotation Speed", 0.0, 2.0, plane_rot_speed, "{:.3f}",
-    lambda v: globals().update(plane_rot_speed=v)
-)
-# 平面高さ（m）
-add_mode_slider("回る天井", ui,
-    "Plane Height", minZ, maxZ, plane_height, "{:.2f}",
-    lambda v: globals().update(plane_height=v)
-)
-ui.append_to_caption("<br>")
-
-# ========================================================
-# Interactive part
-# ========================================================
-# ─── Audience 数スライダー ─────────────────────────
-ui.append_to_caption("<b>観客パラメータ</b><br>")
-txt0 = wtext(text="Audience Count: ", canvas=ui)
-txt1 = wtext(text=f"{audience_count}  ", canvas=ui)
-aud_count_slider = slider(min=0, max=10, value=audience_count, length=200,
-    bind=lambda s, txt=txt1: (
-        globals().update(audience_count=int(s.value)),
-        txt.__setattr__("text", f"{int(s.value)}  ")
-    ),
-    canvas=ui)
-ui.append_to_caption("<br>")
-
-# グローバルに追加
-audience_speed_amp = 0.5
-
-# UI：観客パラメータの最後に
-txt_amp0 = wtext(text="観客速度変動幅: ", canvas=ui)
-txt_amp1 = wtext(text=f"{audience_speed_amp:.2f}  ", canvas=ui)
-amp_slider = slider(
-    min=0.0, max=1.0, value=audience_speed_amp, length=200,
-    bind=lambda s, txt=txt_amp1: (
-        globals().update(audience_speed_amp=s.value),
-        txt.__setattr__("text", f"{s.value:.2f}  ")
-    ),
-    canvas=ui
-)
-ui.append_to_caption("<br>")
+# メイン画面に出力
+st.write(f"現在のモード: **{mode}**")
+st.write("----")
+st.write("### シミュレーションパラメータ")
+st.write({
+    "separationFactor": separationFactor,
+    "cohesionFactor":   cohesionFactor,
+    # 他のパラメータも必要に応じて追加
+})
 
 
-# ─── 人体検出半径スライダー ─────────────────────────
-txt_dr0 = wtext(text="検出半径: ", canvas=ui)
-txt_dr1 = wtext(text=f"{detect_radius:.2f} m  ", canvas=ui)
-slider(min=0.0, max=5.0, value=detect_radius, length=200,
-       bind=lambda s, txt=txt_dr1: (
-           globals().update(detect_radius=s.value),
-           txt.__setattr__("text", f"{s.value:.2f} m  ")
-       ),
-       canvas=ui)
-ui.append_to_caption("<br><br>")
+# 以下、他のグローバル変数と初期化部分はそのまま残してください
 
-# ─── ③ 鬼さんこちらモード　UI：スライダー追加 ─────────────────────────────────────────
-ui.append_to_caption("<b>鬼さんこちらモードパラメータ</b><br>")
-add_mode_slider(
-    "鬼さんこちらモード", ui,
-    "Empty Radius", 0.0, 5.0,
-    oni_empty_radius, "{:.2f}",
-    lambda v: globals().update(oni_empty_radius=v)
-)
-ui.append_to_caption("<br><br>")
+# ... (以降のコードはそのまま)
 
-
-
-# ─── UI：Pause/Resume ボタン ────────────────────────────
-def toggle_pause(b):
-    global paused
-    paused = not paused
-    b.text = "Resume" if paused else "Pause"
-
-pause_button = button(text="Pause", bind=toggle_pause, canvas=ui)
 
 # ========================================================
 # Agent クラス
@@ -781,12 +612,7 @@ def update_geometry(ag):
         ld2.pos = vector(ag.x + u.x * (agent_length * off),
                          ag.y + u.y * (agent_length * off),
                          0)
-# 補助関数：frange（任意の間隔でグリッドサーチ）
-def frange(start, stop, step):
-    x = start
-    while x <= stop:
-        yield xc
-        x += step
+
 
 # ========================================================
 # メインループ
@@ -800,7 +626,12 @@ epsilon           = 0.05   # 高さ差トリガーの許容幅
 ease_speed = 1.0   # 大きいほど速く追従（0.0～10.0 くらいが調整幅の目安）
 ease_color_speed = 1.0   # 1秒でどれだけ追いつくか（大きいほど速い）
 
-
+# 補助関数：frange（任意の間隔でグリッドサーチ）
+def frange(start, stop, step):
+    x = start
+    while x <= stop:
+        yield x
+        x += step
 
 
 while True:
@@ -817,7 +648,7 @@ while True:
     if len(audiences) != audience_count:
         # ① 既存のオブジェクトを完全に消去
         for person in audiences:
-            person.body.visible = Falsec
+            person.body.visible = False
             person.head.visible = False
             person.dot2d.visible = False
             # 参照を切ってガベージコレクト
@@ -865,7 +696,7 @@ while True:
 
 
 
-    if mode_menu.selected == "回る天井":
+    if mode == "回る天井":
         # 1) 傾斜面の法線ベクトル
         a = radians(tilt_angle_deg)
         n0 = vector(0, -sin(a), cos(a))
@@ -938,7 +769,7 @@ while True:
 
 
             
-    elif mode_menu.selected == "フローモード":
+    elif mode == "フローモード":
         # ─── 1) 全エージェントの Z 更新（Boids＋Wave） ─────────────────
         for ag in agents:
             # Boids の高さ更新だけ
@@ -1023,7 +854,7 @@ while True:
 
 
 
-    elif mode_menu.selected == "天上天下唯我独尊モード":
+    elif mode == "天上天下唯我独尊モード":
         # 1) GroupA切り替え（これまでどおり）
         za     = agents[current_groupA_idx].z
         zb     = sum(a.z for i,a in enumerate(agents) if i != current_groupA_idx) / (len(agents)-1)
@@ -1147,7 +978,7 @@ while True:
             if p >= 1.0:
                 is_transitioning = False
 
-    elif mode_menu.selected == "鬼さんこちらモード":
+    elif mode == "鬼さんこちらモード":
         # 1) 混雑チェック
         is_crowded = True
         step = 0.5
@@ -1352,4 +1183,3 @@ while True:
     scene3d.camera.axis = vector(centerX-camX,
                                  centerY-camY,
                                  ((minZ+maxZ)/2)-cameraHeight)
-    

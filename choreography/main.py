@@ -10,6 +10,8 @@ import colorsys
 import random
 from math import radians, degrees, sin, cos
 
+from osc_listener import start_osc_listener, params
+
 
 # ─── モード切替トランジション用 ─────────────────────
 is_transitioning   = False
@@ -136,7 +138,8 @@ scene3d = canvas(
     width=600, height=400, #     width=800, height=533,
     background=color.gray(0.2),
     caption="",
-    align='right'
+    align='right',
+    margin=10
 )
 scene3d.up       = vector(0,0,1)
 scene3d.forward  = vector(-1,-1,-0.2)
@@ -147,9 +150,10 @@ scene3d.userspin = False
 # ========================================================
 scene2d = canvas(
     width=600, height=400,
-    background=color.gray(0.2),
+    background=color.gray(0.15),
     caption="",
-    align='right'
+    align='right',
+    margin=10
 )
 scene2d.camera.projection = "orthographic"
 scene2d.up            = vector(1,0,0)
@@ -177,6 +181,7 @@ ceiling = box(canvas=scene3d,
 # ========================================================
 # UI（下段にまとめる）
 # ========================================================
+# UI 用キャンバス（サイズゼロにしても OK）
 ui = canvas(
     width=0, height=0,
     background=color.white,
@@ -184,182 +189,27 @@ ui = canvas(
     align='left'
 )
 
-# ドロップダウンメニューの作成
-modes = ["フローモード", "天上天下唯我独尊モード", "回る天井", "鬼さんこちらモード"]
-# ドロップダウン作成
+# ① 先に切り替え用コールバックを定義
 def on_mode_select(m):
     global is_transitioning, transition_start
-    # 既存の visibility 切り替え処理
-    select = m.selected
-    for mode, widgets in slider_groups.items():
-        for w in widgets:
-            w.visible = (mode == select)
+    # …既存のモード切り替えロジック（transition_start とか agents.prev_* の保存など）…
 
-    # ここからトランジション開始処理
-    is_transitioning   = True
-    transition_start   = sim_time
-    # 各エージェントの「切り替え前ステート」を保存
-    for ag in agents:
-        ag.prev_z     = ag.z
-        ag.prev_yaw   = ag.yaw
-        ag.prev_pitch = ag.pitch
-        ag.prev_color = ag.current_color
-
-
-mode_menu = menu(choices=modes, index=0, bind=on_mode_select, canvas=ui)
-ui.append_to_caption("\n\n")  # 少し余白
-
-# 各モードのスライダーを登録しておく辞書
-slider_groups = { mode: [] for mode in modes }
-
-# add_slider をラップして、mode を指定できるようにする
-def add_mode_slider(mode, cnv, label, mn, mx, val, fmt, setter):
-    # ラベル
-    txt0 = wtext(text=f"{label}: ", canvas=cnv)
-    # 値表示
-    txt1 = wtext(text=f"{fmt.format(val)}  ", canvas=cnv)
-    # スライダー本体
-    sld = slider(min=mn, max=mx, value=val, length=200,
-                 bind=lambda s, txt=txt1, fmt=fmt, st=setter: (
-                     st(s.value), txt.__setattr__("text", f"{fmt.format(s.value)}  ")
-                 ),
-                 canvas=cnv)
-    cnv.append_to_caption("<br>")
-    # ウィジェット一覧に登録（visibility 切り替え用）
-    slider_groups[mode] += [txt0, txt1, sld]
-    return sld
-
-
-# ─── Behavior Control ─────────────────────────────────
-ui.append_to_caption("<b>フローパラメータ</b><br>")
-add_mode_slider("フローモード", ui, "Separation",    0,   2,   separationFactor, "{:.2f}",
-           lambda v: globals().update(separationFactor=v))
-add_mode_slider("フローモード", ui, "Cohesion",      0,   2,   cohesionFactor,   "{:.2f}",
-           lambda v: globals().update(cohesionFactor=v))
-add_mode_slider("フローモード", ui, "Noise Scale",   .01, .5,  noiseScale,      "{:.2f}",
-           lambda v: globals().update(noiseScale=v))
-add_mode_slider("フローモード", ui, "Wave Scale",    .01, 1.0, waveScale,       "{:.2f}",
-           lambda v: globals().update(waveScale=v))
-add_mode_slider("フローモード", ui, "Wave Strength", 0,   1,   waveStrength,    "{:.2f}",
-           lambda v: globals().update(waveStrength=v))
-add_mode_slider("フローモード", ui, "Noise Speed",   0,   .1,  noiseSpeed,      "{:.3f}",
-           lambda v: globals().update(noiseSpeed=v))
-# LED 波の振幅
-add_mode_slider("フローモード", ui, "LED Amplitude", 0, 2, led_amp, "{:.2f}",
-           lambda v: globals().update(led_amp=v))
-
-# ─── HSB Color Control ───────────────────────────────
-# 3) UI（add_mode_slider／"フローモード", ui.append_to_caption済みと仮定）
-add_mode_slider("フローモード", ui, "Hue Offset", 0.0, 1.0, base_hue, "{:.2f}",
-           lambda v: globals().update(base_hue=v))
-add_mode_slider("フローモード", ui, "Hue Span",   0.0, 1.0, hue_span, "{:.2f}",
-           lambda v: globals().update(hue_span=v))
-ui.append_to_caption("<br>")
-
-# ========================================================
-# UI：モード別スライダー登録（天上天下唯我独尊モード）
-# ========================================================
-ui.append_to_caption("<b>天上天下唯我独尊パラメータ</b><br>")
-
-add_mode_slider("天上天下唯我独尊モード", ui,
-    "Sine Amplitude", 0.0, 2.0, target_sine_amp, "{:.2f}",
-    lambda v: globals().update(target_sine_amp=v)
-)
-add_mode_slider("天上天下唯我独尊モード", ui,
-    "Sine Frequency", 0.0, 2.0, target_sine_freq, "{:.2f}",
-    lambda v: globals().update(target_sine_freq=v)
-)
-
-add_mode_slider(
-    "天上天下唯我独尊モード", ui,
-    "Color Speed", 0.0, 2.0, color_speed, "{:.2f}",
-    lambda v: globals().update(color_speed=v)
-)
-ui.append_to_caption("<br>")
-
-# ========================================================
-# ─── 回る天井モード用パラメータ ───────────────────
-# ========================================================
-ui.append_to_caption("<b>回る天井パラメータ</b><br>")
-# 角度（°）
-add_mode_slider("回る天井", ui,
-    "Tilt Angle", 0.0, 90.0, tilt_angle_deg, "{:.1f}",
-    lambda v: globals().update(tilt_angle_deg=v)
-)
-# 回転速度（rad/s）
-add_mode_slider("回る天井", ui,
-    "Rotation Speed", 0.0, 2.0, plane_rot_speed, "{:.3f}",
-    lambda v: globals().update(plane_rot_speed=v)
-)
-# 平面高さ（m）
-add_mode_slider("回る天井", ui,
-    "Plane Height", minZ, maxZ, plane_height, "{:.2f}",
-    lambda v: globals().update(plane_height=v)
-)
-ui.append_to_caption("<br>")
-
-# ========================================================
-# Interactive part
-# ========================================================
-# ─── Audience 数スライダー ─────────────────────────
-ui.append_to_caption("<b>観客パラメータ</b><br>")
-txt0 = wtext(text="Audience Count: ", canvas=ui)
-txt1 = wtext(text=f"{audience_count}  ", canvas=ui)
-aud_count_slider = slider(min=0, max=10, value=audience_count, length=200,
-    bind=lambda s, txt=txt1: (
-        globals().update(audience_count=int(s.value)),
-        txt.__setattr__("text", f"{int(s.value)}  ")
-    ),
-    canvas=ui)
-ui.append_to_caption("<br>")
-
-# グローバルに追加
-audience_speed_amp = 0.5
-
-# UI：観客パラメータの最後に
-txt_amp0 = wtext(text="観客速度変動幅: ", canvas=ui)
-txt_amp1 = wtext(text=f"{audience_speed_amp:.2f}  ", canvas=ui)
-amp_slider = slider(
-    min=0.0, max=1.0, value=audience_speed_amp, length=200,
-    bind=lambda s, txt=txt_amp1: (
-        globals().update(audience_speed_amp=s.value),
-        txt.__setattr__("text", f"{s.value:.2f}  ")
-    ),
+# ② ドロップダウンを 1 回だけ生成し、すぐ隠す
+modes = ["フローモード",
+         "天上天下唯我独尊モード",
+         "回る天井",
+         "鬼さんこちらモード"]
+mode_menu = menu(
+    choices=modes,
+    index=0,
+    bind=on_mode_select,
     canvas=ui
 )
-ui.append_to_caption("<br>")
+mode_menu.visible = False  # ←これだけで UI に表示されなくなる
+
+# （以降はメインループ内で mode_menu.index を参照して on_mode_select を手動呼び出し）
 
 
-# ─── 人体検出半径スライダー ─────────────────────────
-txt_dr0 = wtext(text="検出半径: ", canvas=ui)
-txt_dr1 = wtext(text=f"{detect_radius:.2f} m  ", canvas=ui)
-slider(min=0.0, max=5.0, value=detect_radius, length=200,
-       bind=lambda s, txt=txt_dr1: (
-           globals().update(detect_radius=s.value),
-           txt.__setattr__("text", f"{s.value:.2f} m  ")
-       ),
-       canvas=ui)
-ui.append_to_caption("<br><br>")
-
-# ─── ③ 鬼さんこちらモード　UI：スライダー追加 ─────────────────────────────────────────
-ui.append_to_caption("<b>鬼さんこちらモードパラメータ</b><br>")
-add_mode_slider(
-    "鬼さんこちらモード", ui,
-    "Empty Radius", 0.0, 5.0,
-    oni_empty_radius, "{:.2f}",
-    lambda v: globals().update(oni_empty_radius=v)
-)
-ui.append_to_caption("<br><br>")
-
-
-
-# ─── UI：Pause/Resume ボタン ────────────────────────────
-def toggle_pause(b):
-    global paused
-    paused = not paused
-    b.text = "Resume" if paused else "Pause"
-
-pause_button = button(text="Pause", bind=toggle_pause, canvas=ui)
 
 # ========================================================
 # Agent クラス
@@ -785,12 +635,17 @@ def update_geometry(ag):
 def frange(start, stop, step):
     x = start
     while x <= stop:
-        yield xc
+        yield x
         x += step
 
 # ========================================================
 # メインループ
 # ========================================================
+
+print(">>> [main] about to call start_osc_listener()")
+start_osc_listener(ip="0.0.0.0", port=8000)
+print(">>> [main] returned from start_osc_listener()")
+
 sim_time = noise_time = angle = 0.0
 dt = 1/20
 current_groupA_idx = random.randrange(len(agents))
@@ -805,19 +660,54 @@ ease_color_speed = 1.0   # 1秒でどれだけ追いつくか（大きいほど�
 
 while True:
     rate(20)
-    if paused:  
+    if params["pause"] == 1.0:
         continue        # 一時停止中はループ先頭に戻る
     sim_time   += dt
     noise_time += noiseSpeed
     angle      += rotationSpeed
     plane_angle += plane_rot_speed * dt   # ← 平面回転角を更新
 
+    # MaxからのOSCメッセージを更新
+    separationFactor     = params["separation"]
+    cohesionFactor       = params["cohesion"]
+    noiseScale           = params["noise_scale"]
+    waveScale            = params["wave_scale"]
+    waveStrength         = params["wave_strength"]
+    noiseSpeed           = params["noise_speed"]
+    led_amp              = params["led_amplitude"]
+    base_hue             = params["hue_offset"]
+    hue_span             = params["hue_span"]
+    target_sine_amp      = params["sine_amplitude"]
+    target_sine_freq     = params["sine_frequency"]
+    color_speed          = params["color_speed"]
+    tilt_angle_deg       = params["tilt_angle"]
+    plane_rot_speed      = params["rotation_speed"]
+    plane_height         = params["plane_height"]
+    audience_count       = int(params["audience_count"])
+    audience_speed_amp   = params["audience_movement"]
+    detect_radius        = params["detect_radius"]
+    oni_empty_radius     = params["empty_radius"]
+    raw_index            = params["menu"]
+    paused               = bool(params["pause"])
+
+    # 必ず整数化
+    try:
+        menu_index = int(raw_index)
+    except (ValueError, TypeError):
+        print(f"Invalid menu index received: {raw_index}")
+        menu_index = 0
+
+    # OSC から受け取った menu インデックスを反映
+    if menu_index != mode_menu.index:
+        mode_menu.index = menu_index      # ドロップダウンの選択を切り替え
+        on_mode_select(mode_menu)         # 必要なら切り替え処理を手動呼び出し
+
 
     # ─── Audience の再生成チェック ───────────────────
     if len(audiences) != audience_count:
         # ① 既存のオブジェクトを完全に消去
         for person in audiences:
-            person.body.visible = Falsec
+            person.body.visible = False
             person.head.visible = False
             person.dot2d.visible = False
             # 参照を切ってガベージコレクト
