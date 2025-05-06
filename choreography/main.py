@@ -12,6 +12,8 @@ from math import radians, degrees, sin, cos
 
 from osc_listener import start_osc_listener, params
 
+from mqtt_listener import start, fetch_messages, stop
+
 
 # ─── モード切替トランジション用 ─────────────────────
 is_transitioning   = False
@@ -123,6 +125,23 @@ oni_color_start     = 0.0            # 降下開始時刻（色イージング�
 oni_initial_color   = vector(1,1,1)  # 降下開始時の色
 oni_target_color    = vector(1,1,1)  # 2 秒後に向かう反対色
 
+# --------------------------------------------------------
+# Audience 表示モード
+#   False  … 既存のランダム移動シミュレーション
+#   True   … MQTT “ca” 座標で直接配置（センサーモード）
+# --------------------------------------------------------
+sensor_mode        = False      # 既存
+sensor_person      = None       # 1 人だけ使い回す
+last_aud_msg_time  = 0.0        # 最後に ca を受信した時刻
+PRESENCE_TIMEOUT   = 0.8        # 秒：これを過ぎたら非表示
+
+# ─── Sound‑reaction globals ──────────────────────────────────
+last_sound_coords   = None     # (x, y) in m
+last_sound_time     = -1.0     # sim_time at reception
+SOUND_REACT_TIME    = 1.0   # 振り向きが効いているピーク時間
+SOUND_REACT_DECAY   = 1.0   # フェードアウト
+SOUND_TURN_TIME     = 0.5   # ← ★ 完全に振り向くまでに使える時間
+
 
 # ========================================================
 # MQTT セットアップ
@@ -208,7 +227,33 @@ mode_menu = menu(
 mode_menu.visible = False  # ←これだけで UI に表示されなくなる
 
 # （以降はメインループ内で mode_menu.index を参照して on_mode_select を手動呼び出し）
+wtext(text='<br><br>')
 
+def toggle_sensor(b):
+    global sensor_mode, sensor_person, audiences
+    sensor_mode = not sensor_mode
+    b.text = "Sensor ON" if sensor_mode else "Sensor OFF"
+    print("Sensor mode =", sensor_mode)
+
+    if sensor_mode:
+        # ---- これからセンサー入力に切り替える ----
+        # 既存観客オブジェクトは全部消す
+        for p in audiences:
+            if hasattr(p, "body"):
+                p.body.visible  = False
+                p.head.visible  = False
+                p.dot2d.visible = False
+        audiences.clear()
+        sensor_person = None       # 新しく作り直させる
+    else:
+        # ---- シミュレーションに戻る ----
+        sensor_person = None       # もう使わない
+
+sensor_btn = button(
+    canvas=ui,
+    text="Sensor OFF",        # 初期表示
+    bind=toggle_sensor
+)
 
 
 # ========================================================
@@ -619,6 +664,76 @@ y_range = (centerY - span/2, centerY + span/2)
 audiences = []  # 最初は空
 
 
+# ───────────────────────────────────────────────
+# 受信した座標をどう使うかはプロジェクト側で実装
+# ───────────────────────────────────────────────
+sensor_person = None        # 1 人だけ描画する想定（複数なら list に）
+
+def handle_audience(coords):
+    global sensor_person, audiences, last_aud_msg_time
+    x, y = coords
+    last_aud_msg_time = sim_time          # ← 受信時刻を記録
+
+    if not sensor_mode:
+        return
+
+    # ----- 1人目を生成（まだ無い or 削除済みのときだけ） -----
+    if (sensor_person is None or
+        not hasattr(sensor_person, "body")):
+
+        # 既存のリストを空にしてから 1 人追加
+        for p in audiences:
+            if hasattr(p, "body"):
+                p.body.visible  = p.head.visible = False
+                p.dot2d.visible = False
+        audiences.clear()
+
+        x_range = (centerX - span/2, centerX + span/2)
+        y_range = (centerY - span/2, centerY + span/2)
+        sensor_person = Audience(scene3d, scene2d,
+                                 x_range, y_range,
+                                 height=1.7, radius=0.15, speed=0.0)
+        audiences.append(sensor_person)
+
+    # ----- 位置だけ更新 -----
+    sensor_person.x, sensor_person.y = x, y
+    sensor_person.body.pos = vector(x, y, 0)
+    sensor_person.head.pos = vector(x, y,
+                                    sensor_person.cyl_h + sensor_person.radius)
+    sensor_person.dot2d.pos = vector(x, y, -0.1)
+    # 可視化を確実に ON
+    sensor_person.body.visible  = True
+    sensor_person.head.visible  = True
+    sensor_person.dot2d.visible = True
+
+
+
+
+def handle_sound_source(coords):
+    x, y = coords
+    # 例: ロボットの向きを音源方向に
+    print(f"[SOUND]    x={x:.2f} m, y={y:.2f} m")
+
+def update_scene(dt):
+    """
+    1 フレーム分のシミュレーション / レンダリング / 通信 をまとめて行う。
+    既存の VPython 描画や MQTT publish があるならここに入れる。
+    """
+    pass  # ←既存の描画・物理計算などに置き換える
+
+def toggle_sensor(b):
+    global sensor_mode, sensor_person
+    sensor_mode = not sensor_mode
+    b.text = "Sensor ON" if sensor_mode else "Sensor OFF"
+    print("Sensor mode =", sensor_mode)
+
+    if not sensor_mode and sensor_person:
+        # センサーモードを OFF にしたら観客オブジェクトを消す
+        sensor_person.body.visible  = False
+        sensor_person.head.visible  = False
+        sensor_person.dot2d.visible = False
+        sensor_person = None
+
 # ─── ジオメトリ＆LED 同期関数 ─────────────────────────────
 def update_geometry(ag):
     axis = ag.compute_axis() * agent_length
@@ -638,6 +753,51 @@ def frange(start, stop, step):
         yield x
         x += step
 
+
+def apply_sound_reaction():
+    """
+    ― 音源 (ss) 受信から一定時間、全エージェントが音源方向へ
+      ゆっくり首を振り（SOUND_TURN_TIME 秒でほぼ到達）、
+      ピーク維持後はフェードアウトして元の動きへ戻る。
+    """
+    if last_sound_coords is None:
+        return
+
+    elapsed = sim_time - last_sound_time
+    total   = SOUND_REACT_TIME + SOUND_REACT_DECAY
+    if elapsed > total:
+        return  # 反応終了
+
+    # --- フェード係数 k: 1 → 0 へ線形 ---------------------------
+    if elapsed <= SOUND_REACT_TIME:
+        k_fade = 1.0
+    else:
+        k_fade = 1.0 - (elapsed - SOUND_REACT_TIME) / SOUND_REACT_DECAY
+
+    sx, sy = last_sound_coords
+    for ag in agents:
+        # 目標方向
+        dx, dy = sx - ag.x, sy - ag.y
+        dz     = 0.0 - ag.z
+        tgt_yaw   = math.degrees(math.atan2(dy, dx))
+        tgt_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+        tgt_pitch = max(-60, min(60, tgt_pitch))
+
+        # 現在との差 (±180° 正規化)
+        dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+        dpit = tgt_pitch - ag.pitch
+
+        # --- “0.5 秒で追いつく” 回転ステップ --------------------
+        step = min(1.0, dt / SOUND_TURN_TIME)   # dt はグローバルで 1/20 (=0.05)
+
+        ag.yaw   += dyaw * step * k_fade        # フェードも掛ける
+        ag.pitch += dpit * step * k_fade
+
+        # 仕上げ：ジオメトリ更新
+        update_geometry(ag)
+
+
+
 # ========================================================
 # メインループ
 # ========================================================
@@ -645,6 +805,9 @@ def frange(start, stop, step):
 print(">>> [main] about to call start_osc_listener()")
 start_osc_listener(ip="0.0.0.0", port=8000)
 print(">>> [main] returned from start_osc_listener()")
+
+# mqtt起動
+client = start(broker_host="localhost", broker_port=1883)
 
 sim_time = noise_time = angle = 0.0
 dt = 1/20
@@ -703,32 +866,55 @@ while True:
         on_mode_select(mode_menu)         # 必要なら切り替え処理を手動呼び出し
 
 
+    # ★★★ MQTT 受信処理を追加 ★★★
+    for msg in fetch_messages():
+        if msg["topic"] == "ca":
+            handle_audience(msg["coords"])
+        elif msg["topic"] == "ss":
+            # ← ここでグローバルに記録
+            last_sound_coords = msg["coords"]
+            last_sound_time   = sim_time
+
+
+
+
     # ─── Audience の再生成チェック ───────────────────
-    if len(audiences) != audience_count:
+    # ※ センサーモード中は人数をいじらない
+    if (not sensor_mode) and (len(audiences) != audience_count):
         # ① 既存のオブジェクトを完全に消去
         for person in audiences:
-            person.body.visible = False
-            person.head.visible = False
-            person.dot2d.visible = False
-            # 参照を切ってガベージコレクト
-            del person.body, person.head, person.dot2d
+            if hasattr(person, "body"):
+                person.body.visible  = False
+                person.head.visible  = False
+                person.dot2d.visible = False
+                # 参照を切ってガベージコレクト
+                del person.body, person.head, person.dot2d
         audiences.clear()
 
-        # ② 新しい人数分だけ生成
+        # ② 新しい人数分だけ生成（ランダム歩行用）
         x_range = (centerX - span/2, centerX + span/2)
         y_range = (centerY - span/2, centerY + span/2)
         audiences = [
-            Audience(scene3d, scene2d, x_range, y_range,
-                    height=random.uniform(1.5, 1.8),  # 身長
-                    radius=0.15, 
-                    speed=random.uniform(0.5, 1.5))  # 0.5～1.5 のランダム速度)
+            Audience(
+                scene3d, scene2d, x_range, y_range,
+                height=random.uniform(1.5, 1.8),   # 身長
+                radius=0.15,
+                speed=random.uniform(0.5, 1.5)     # 速度 0.5〜1.5 m/s
+            )
             for _ in range(audience_count)
         ]
 
 
+
     # ─── Audience の動作更新 ─────────────────────────
-    for person in audiences:
-        person.update(dt)
+    if sensor_mode:
+        # センサーモードでは自動移動させない
+        pass
+    else:
+        # 既存のランダム移動シミュレーション
+        for person in audiences:
+            person.update(dt)
+
 
 
     # ─── 人検出でターゲット向きだけ計算 ────────────────────
@@ -1235,6 +1421,8 @@ while True:
             mqtt_client.publish(f"cl/{ag.node_id}", bytes([r, g, b]))
 
 
+    apply_sound_reaction()     # ★追加★
+
     # 3Dカメラ軌道更新
     camX = centerX + radius * math.cos(angle)
     camY = centerY + radius * math.sin(angle)
@@ -1242,4 +1430,13 @@ while True:
     scene3d.camera.axis = vector(centerX-camX,
                                  centerY-camY,
                                  ((minZ+maxZ)/2)-cameraHeight)
+    
+    # ループの最後のほう、筒の処理が終わった後などに追加
+    if sensor_mode and sensor_person is not None:
+        if sim_time - last_aud_msg_time > PRESENCE_TIMEOUT:
+            # しばらく信号が来ていない → 隠す
+            sensor_person.body.visible  = False
+            sensor_person.head.visible  = False
+            sensor_person.dot2d.visible = False
+
     

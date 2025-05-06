@@ -785,7 +785,7 @@ def update_geometry(ag):
 def frange(start, stop, step):
     x = start
     while x <= stop:
-        yield xc
+        yield x
         x += step
 
 # ========================================================
@@ -817,7 +817,7 @@ while True:
     if len(audiences) != audience_count:
         # ① 既存のオブジェクトを完全に消去
         for person in audiences:
-            person.body.visible = Falsec
+            person.body.visible = False
             person.head.visible = False
             person.dot2d.visible = False
             # 参照を切ってガベージコレクト
