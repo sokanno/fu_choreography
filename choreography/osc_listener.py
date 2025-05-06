@@ -25,6 +25,12 @@ params = {
     "empty_radius":    0.0,  # 初期値は調整してください
     "menu":              0,    # ドロップダウン用メニュー名
     "pause":             0.0,   # 0: 実行, 1: 一時停止
+    "fish_align" : 0.5,
+    "fish_sep"   : 0.35,
+    "fish_coh"   : 1.2,
+    "fin_amp"    : 4.0,
+    "fin_freq"   : 1.5,
+
 }
 
 # 各パラメータ用ハンドラ

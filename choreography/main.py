@@ -142,6 +142,39 @@ SOUND_REACT_TIME    = 1.0   # 振り向きが効いているピーク時間
 SOUND_REACT_DECAY   = 1.0   # フェードアウト
 SOUND_TURN_TIME     = 0.5   # ← ★ 完全に振り向くまでに使える時間
 
+# ==== Fish‑school mode params ====
+fish_align_factor  = 0.5    # 向きそろえ強度
+fish_sep_dist      = 0.35   # 距離しきい値
+fish_coh_factor    = 1.2    # 群れへの吸引
+fin_osc_amp_deg    = 4.0    # 尾びれ振幅 (deg)
+fin_osc_freq_hz    = 1.5    # 尾びれ周波数
+
+# ==== Shimmer mode params ====
+# ==== Shimmer mode params ====
+# shim_base_freq_hz  = 5.0          # 基本垂直振動 (Hz)
+# shim_base_amp_m    = 0.01         # 振幅 ±1 cm
+# shim_wave_speed    = 1.2          # 伝播速度 (m/s)
+# shim_trigger_mean  = 3.0          # ★ 平均トリガ間隔 [s]（以前 3s）
+# # shim_kick_pitch_deg = 6.0         # ★ ケツ振り横揺れ振幅 (deg)
+# # shim_kick_decay     = 0.6         # ★ 横揺れが0になるまでの減衰時間 [s]
+# shim_kick_yaw_deg   = 20.0   # ★ 水平回転の振幅 (deg)
+# shim_kick_decay     = 0.6    # 減衰時間 [s] （前回と同じで可）
+shim_base_freq_hz = 10.0      # 垂直バイブ＝ 10 Hz（以前 5 Hz）
+shim_base_amp_m   = 0.01      # ±1 cm
+shim_wave_speed   = 1.2       # m/s
+shim_trigger_mean = 6.0       # 波トリガ平均間隔[s]
+shim_front_tol    = 0.35      # 波前線の厚み[m]
+
+# 水平回転キック
+shim_kick_yaw_deg = 60.0      # ピーク ±90°
+shim_kick_rise    = 0.5       # 0→MAX 0.5 s
+shim_kick_decay   = 0.8       # その後指数減衰 τ
+
+# Shimmer wave bookkeeping
+next_shim_time = 0.0      # 次トリガー時刻
+wave_fronts = []          # [(origin_i, origin_j, start_time)]
+color_rise_time   = 0.5      # 色をグラデーションする秒数
+
 
 # ========================================================
 # MQTT セットアップ
@@ -217,7 +250,9 @@ def on_mode_select(m):
 modes = ["フローモード",
          "天上天下唯我独尊モード",
          "回る天井",
-         "鬼さんこちらモード"]
+         "鬼さんこちらモード",
+         "魚群モード",
+         "蜂シマーモード"]
 mode_menu = menu(
     choices=modes,
     index=0,
@@ -796,6 +831,8 @@ def apply_sound_reaction():
         # 仕上げ：ジオメトリ更新
         update_geometry(ag)
 
+def clamp(v, lo, hi):        # ★ 追加 ★
+    return max(lo, min(hi, v))
 
 
 # ========================================================
@@ -852,6 +889,13 @@ while True:
     oni_empty_radius     = params["empty_radius"]
     raw_index            = params["menu"]
     paused               = bool(params["pause"])
+    # 既存の OSC → 変数割当ブロックに追記
+    fish_align_factor = params["fish_align"]
+    fish_sep_dist     = params["fish_sep"]
+    fish_coh_factor   = params["fish_coh"]
+    fin_osc_amp_deg   = params["fin_amp"]
+    fin_osc_freq_hz   = params["fin_freq"]
+
 
     # 必ず整数化
     try:
@@ -1420,6 +1464,154 @@ while True:
             b = max(0, min(255, b))
             mqtt_client.publish(f"cl/{ag.node_id}", bytes([r, g, b]))
 
+    elif mode_menu.selected == "魚群モード":
+        # 0) 流れベクトル（逆向き）を先に求める
+        flow_vecs = []
+        for ag in agents:
+            fx = pnoise2(ag.i*noiseScale + noise_time,
+                        ag.j*noiseScale + noise_time)
+            fy = pnoise2(ag.i*noiseScale + noise_time + 50,
+                        ag.j*noiseScale + noise_time + 50)
+            v = vector(-fx, -fy, 0).norm()  # 逆向き
+            flow_vecs.append(v)
+
+        # 1) Boids in XY 平面
+        for idx, ag in enumerate(agents):
+            sep = coh = align = vector(0,0,0)
+            cnt = 0
+            for jdx in ag.neighbors:
+                if 0 <= jdx < len(agents):     # ★ガードを追加★
+                    nb = agents[jdx]
+                    dxy   = vector(nb.x - ag.x, nb.y - ag.y, 0)
+                    dist  = dxy.mag
+                    if dist < fish_sep_dist:
+                        sep -= dxy / (dist**2 + 1e-3)
+                    coh   += dxy
+                    align += flow_vecs[jdx]
+                    cnt   += 1
+
+            if cnt:
+                coh /= cnt
+                align /= cnt
+
+            steer = (sep*1.8 +
+                    coh * fish_coh_factor +
+                    align * fish_align_factor +
+                    flow_vecs[idx])
+
+            # 目標方向 → yaw/pitch
+            steer = steer.norm()
+            tgt_yaw   = math.degrees(math.atan2(steer.y, steer.x))
+            tgt_pitch = 0  # 水平泳ぎ
+
+            # 尾びれオシレータ
+            phase = ag.idx * 0.7  # 個体差
+            osc   = fin_osc_amp_deg * math.sin(2*math.pi*fin_osc_freq_hz*sim_time + phase)
+            tgt_yaw += osc
+
+            # イージング
+            k = min(1.0, ease_speed * dt)
+            dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+            ag.yaw   += dyaw   * k
+            ag.pitch += (tgt_pitch - ag.pitch) * k
+
+            # Z の“押し返し”
+            z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
+                            ag.j*waveScale + sim_time*0.3)
+            ag.z = flow_target_height + z_wave*0.3   # 30 cm 振幅
+
+            update_geometry(ag)
+
+            # LED のきらめき
+            hue = (0.55 + steer.x*0.15) % 1.0        # 青緑系中心
+            flick = 0.7 + 0.3*math.sin(sim_time*10 + phase)
+            r,g,b = colorsys.hsv_to_rgb(hue, 0.8, flick)
+            col   = vector(r,g,b)
+            for ld3, ld2, _ in ag.leds:
+                ld3.color = ld2.color = col
+
+    # ------------------------------------------------------------
+    elif mode_menu.selected == "蜂シマーモード":
+    # ------------------------------------------------------------
+
+        # 0) 波をランダム発生（色も一緒に決めて保存）
+        if sim_time >= next_shim_time:
+            h  = random.random()                 # 0–1 ランダム色相
+            r,g,b = colorsys.hsv_to_rgb(h, 0.9, 1.0)
+            wave_color = vector(r,g,b)
+            ori = random.choice(agents)
+            wave_fronts.append((ori.x, ori.y, sim_time, wave_color))
+            next_shim_time = sim_time + random.expovariate(1.0 / shim_trigger_mean)
+
+        # 1) 各筒を走査
+        for ag in agents:
+            # A) 基本垂直振動
+            z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time
+                                + ag.idx*0.7) * shim_base_amp_m
+
+            # B) 初回プロパティ確保
+            if not hasattr(ag, "yaw0"):
+                ag.yaw0 = ag.yaw
+                ag.z0   = ag.z
+                ag.kick_time  = -999.0
+                ag.kick_peak  = 0.0
+                ag.current_color = vector(1,1,0)   # 初期黄色
+                ag.color_from   = ag.current_color
+                ag.color_to     = ag.current_color
+                ag.color_t0     = -999.0
+
+            # C) 波フロント到達判定
+            for ox, oy, t0, wcol in wave_fronts:
+                tau   = sim_time - t0
+                front = shim_wave_speed * tau
+                d = math.hypot(ag.x - ox, ag.y - oy)
+                if 0 < tau < 3.0 and abs(d - front) < shim_front_tol:
+                    # 垂直揺れ増幅 + 回転キック
+                    z_off       += shim_base_amp_m * 4
+                    ag.kick_time = sim_time
+                    ag.kick_peak = shim_kick_yaw_deg
+
+                    # 色をグラデーションで wcol へ
+                    ag.color_from = ag.current_color
+                    ag.color_to   = wcol
+                    ag.color_t0   = sim_time
+
+            # D) 回転イージング
+            age = sim_time - ag.kick_time
+            if age < 0:
+                yaw_off = 0.0
+            elif age <= shim_kick_rise:
+                yaw_off = ag.kick_peak * (age / shim_kick_rise)
+            else:
+                yaw_off = ag.kick_peak * math.exp(-(age-shim_kick_rise)/shim_kick_decay)
+
+            # E) 観客近接で強調
+            for p in audiences:
+                if math.hypot(p.x - ag.x, p.y - ag.y) < 1.0:
+                    z_off  *= 2
+                    yaw_off*= 1.5
+                    break
+
+            # F) 色をグラデーション補間
+            if sim_time - ag.color_t0 < color_rise_time:
+                tcol = (sim_time - ag.color_t0) / color_rise_time
+                ag.current_color = ag.color_from*(1-tcol) + ag.color_to*tcol
+            else:
+                ag.current_color = ag.color_to
+
+            # G) 位置・向き・色反映
+            ag.z   = clamp(ag.z0 + z_off, minZ, maxZ)
+            ag.yaw = ag.yaw0 + yaw_off
+            ag.pitch = 0.0
+            update_geometry(ag)
+
+            for l3,l2,_ in ag.leds:
+                l3.color = l2.color = ag.current_color
+
+        # 2) 古い波を 8 s で破棄
+        wave_fronts[:] = [(ox,oy,t0,c) for (ox,oy,t0,c) in wave_fronts
+                            if sim_time - t0 < 8.0]
+    # ------------------------------------------------------------
 
     apply_sound_reaction()     # ★追加★
 
