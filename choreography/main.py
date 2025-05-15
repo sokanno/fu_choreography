@@ -13,7 +13,15 @@ from math import radians, degrees, sin, cos
 from osc_listener import start_osc_listener, params
 
 from mqtt_listener import start, fetch_messages, stop
+from pythonosc import udp_client
+import struct
+import threading
+import queue
 
+# SuperCollider サーバーのホストとポート
+SC_HOST = "127.0.0.1"
+SC_PORT = 57121
+osc_client = udp_client.SimpleUDPClient(SC_HOST, SC_PORT)
 
 # ─── モード切替トランジション用 ─────────────────────
 is_transitioning   = False
@@ -180,14 +188,15 @@ color_rise_time   = 0.5      # 色をグラデーションする秒数
 # MQTT セットアップ
 # ========================================================
 mqtt_client = mqtt.Client()
-mqtt_client.connect("127.0.0.1", 1883, 60)
+# mqtt_client.connect("127.0.0.1", 1883, 60)
+mqtt_client.connect("192.168.1.2", 1883, 60)
 mqtt_client.loop_start()
 
 # ========================================================
 # 3Dビュー（左上）
 # ========================================================
 scene3d = canvas(
-    width=600, height=400, #     width=800, height=533,
+    width=1200, height=800, #     width=800, height=533,
     background=color.gray(0.2),
     caption="",
     align='right',
@@ -201,7 +210,7 @@ scene3d.userspin = False
 # 上からビュー（右上）
 # ========================================================
 scene2d = canvas(
-    width=600, height=400,
+    width=300, height=200,
     background=color.gray(0.15),
     caption="",
     align='right',
@@ -248,7 +257,7 @@ def on_mode_select(m):
 
 # ② ドロップダウンを 1 回だけ生成し、すぐ隠す
 modes = ["フローモード",
-         "天上天下唯我独尊モード",
+         "天上天下モード",
          "回る天井",
          "鬼さんこちらモード",
          "魚群モード",
@@ -835,6 +844,98 @@ def clamp(v, lo, hi):        # ★ 追加 ★
     return max(lo, min(hi, v))
 
 
+def send_robot_data(agent):
+    """
+    agent: 各エージェントオブジェクト
+    - node_id: int
+    - z, pitch, yaw: float
+    - current_color.x/y/z: 0.0–1.0
+    """
+    
+    # ---- MQTT 出力 ----
+    # 位置・向き
+    payload_pos = struct.pack("<3f",
+                              round(agent.z, 2),
+                              round(agent.pitch, 2),
+                              round(agent.yaw,   2))
+    mqtt_client.publish(f"ps/{agent.node_id}", payload_pos)
+    # 色
+    r = int(agent.current_color.x * 255)
+    g = int(agent.current_color.y * 255)
+    b = int(agent.current_color.z * 255)
+    mqtt_client.publish(f"cl/{agent.node_id}", bytes([r, g, b]))
+
+    # ---- OSC 出力 ----
+    # SuperCollider の OSCFunc('/robot') に合わせて、
+    # [id, r, g, b, angle, height]
+    # angle は 0–360deg のまま、height は 0.0–1.0 正規化済みと仮定
+    # osc_client.send_message(
+    #     "/robot",
+    #     [agent.node_id,
+    #      agent.current_color.x,
+    #      agent.current_color.y,
+    #      agent.current_color.z,
+    #      agent.yaw,
+    #      (agent.z - minZ) / (maxZ - minZ)]
+    # )
+
+# 1) 送信用キューを用意
+send_queue = queue.Queue()
+
+# 2) ネットワークワーカーを起動
+def network_worker():
+    while True:
+        agent = send_queue.get()  # エージェントオブジェクトを受け取る
+        try:
+            send_robot_data(agent)
+        except Exception as e:
+            print(f"[network_worker] 送信エラー for agent {agent.node_id}: {e}")
+        finally:
+            send_queue.task_done()
+
+threading.Thread(target=network_worker, daemon=True).start()
+
+# def send_group_heights(agents, minZ, maxZ):
+#     """各グループの平均高さを 0-1 に正規化して送信"""
+#     def norm(height):
+#         return (height - minZ) / (maxZ - minZ) if maxZ != minZ else 0.5
+
+#     zs_A = [ag.z for ag in agents if ag.group == "A"]
+#     zs_B = [ag.z for ag in agents if ag.group == "B"]
+
+#     if zs_A:
+#         osc_client.send_message('/groupA', norm(sum(zs_A)/len(zs_A)))
+#     if zs_B:
+#         osc_client.send_message('/groupB', norm(sum(zs_B)/len(zs_B)))
+    
+def send_group_stats(agents, minZ, maxZ):
+    """
+    各グループの平均高さ (0.0–1.0 正規化) に加えて
+    groupA の平均 X/Y 座標も送信する。
+    """
+    def norm_height(h):
+        return (h - minZ) / (maxZ - minZ) if maxZ != minZ else 0.5
+
+    # グループごとに集める
+    groupA = [ag for ag in agents if ag.group == "A"]
+    groupB = [ag for ag in agents if ag.group == "B"]
+
+    # 高さの送信
+    if groupA:
+        avg_z_A = sum(ag.z for ag in groupA) / len(groupA)
+        osc_client.send_message('/groupA_height', norm_height(avg_z_A))
+    if groupB:
+        avg_z_B = sum(ag.z for ag in groupB) / len(groupB)
+        osc_client.send_message('/groupB_height', norm_height(avg_z_B))
+
+    # groupA の X/Y も送る
+    if groupA:
+        avg_x_A = sum(ag.x for ag in groupA) / len(groupA)
+        avg_y_A = sum(ag.y for ag in groupA) / len(groupA)
+        osc_client.send_message('/groupA_x', avg_x_A)
+        osc_client.send_message('/groupA_y', avg_y_A)
+
+
 # ========================================================
 # メインループ
 # ========================================================
@@ -844,7 +945,8 @@ start_osc_listener(ip="0.0.0.0", port=8000)
 print(">>> [main] returned from start_osc_listener()")
 
 # mqtt起動
-client = start(broker_host="localhost", broker_port=1883)
+# client = start(broker_host="localhost", broker_port=1883)
+client = start(broker_host="192.168.1.2", broker_port=1883)
 
 sim_time = noise_time = angle = 0.0
 dt = 1/20
@@ -918,8 +1020,6 @@ while True:
             # ← ここでグローバルに記録
             last_sound_coords = msg["coords"]
             last_sound_time   = sim_time
-
-
 
 
     # ─── Audience の再生成チェック ───────────────────
@@ -1002,6 +1102,13 @@ while True:
             plane_zs.append(min(max(minZ, z_p), maxZ))
         minZp, maxZp = min(plane_zs), max(plane_zs)
 
+        # ★★★ ここに追加 ★★★
+        sin_val = math.sin(sim_time)   # 任意で周波数掛け算
+        cos_val = math.cos(sim_time)
+        osc_client.send_message('/sin', sin_val)
+        osc_client.send_message('/cos', cos_val)
+        # ★★★★★★★★★★★★★
+
         # 3) 各エージェントごとに高さ固定＆向きイージング
         for ag, z in zip(agents, plane_zs):
             # (A) 高さは平面揃え
@@ -1048,14 +1155,23 @@ while True:
             # ─── 7) 色更新（従来通り）────────────────────────
             global_hue   = (sim_time * color_speed) % 1.0
             height_ratio = (ag.z - minZp) / (maxZp - minZp)
+            if ag.id == 1:
+                # osc_client.send_message('/id1/z',       ag.z)          # 実座標
+                osc_client.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
             hue        = (global_hue + height_ratio * 0.125) % 1.0
             brightness = 1.0 - 0.5 * height_ratio
             r, g, b    = colorsys.hsv_to_rgb(hue, 1.0, brightness)
+            osc_client.send_message('/hue', hue)   # ★ここを追加★
             col        = vector(r, g, b)
             ag.body.color = col
             for ld3, ld2, _ in ag.leds:
                 ld3.color = ld2.color = col
-
+            
+            # ─── 5) 描画・LED・MQTT 出力 ───────────────────────────────
+            # for ag in agents:
+            #     ag.display()
+            #     ag.set_leds()
+            send_queue.put(ag)
 
             
     elif mode_menu.selected == "フローモード":
@@ -1125,147 +1241,128 @@ while True:
                     ag.y + u.y*(agent_length*off),
                     0
                 )
-        # ─── 5) 描画・LED・MQTT 出力 ───────────────────────────────
-        for ag in agents:
-            ag.display()
-            ag.set_leds()
-            # 位置・向き
-            mqtt_client.publish(f"ps/{ag.node_id}",
-                struct.pack("<3f",
-                            round(ag.z,2),
-                            round(ag.pitch,2),
-                            round(ag.yaw,2)))
-            # 色
-            r = int(ag.current_color.x * 255)
-            g = int(ag.current_color.y * 255)
-            b = int(ag.current_color.z * 255)
-            mqtt_client.publish(f"cl/{ag.node_id}", bytes([r,g,b]))
+
+             # ─── 5) 描画・LED・MQTT 出力 ───────────────────────────────
+            for ag in agents:
+                ag.display()
+                ag.set_leds()
+            
+            # ─── 6) MQTT 出力──────────────────────────────
+            send_queue.put(ag)
 
 
 
-    elif mode_menu.selected == "天上天下唯我独尊モード":
-        # 1) GroupA切り替え（これまでどおり）
-        za     = agents[current_groupA_idx].z
-        zb     = sum(a.z for i,a in enumerate(agents) if i != current_groupA_idx) / (len(agents)-1)
+
+
+    elif mode_menu.selected == "天上天下モード":
+        # ─────────────────────────────────────────────
+        # 1) Group-A の切り替え判定
+        # ─────────────────────────────────────────────
+        za = agents[current_groupA_idx].z
+        zb = sum(a.z for i, a in enumerate(agents) if i != current_groupA_idx) / (len(agents)-1)
         z_diff = za - zb
+
         if prev_z_diff is not None and abs(z_diff) < epsilon:
+            # 平衡状態なら別のエージェントをリーダーに
             choices = list(range(len(agents)))
             choices.remove(current_groupA_idx)
             current_groupA_idx = random.choice(choices)
         prev_z_diff = z_diff
 
-        # 2) group 属性セット
+        # ─────────────────────────────────────────────
+        # 2) グループ属性と色の決定（変更検知あり）
+        # ─────────────────────────────────────────────
+        group_changed = False
         for idx, ag in enumerate(agents):
-            ag.group = "A" if idx == current_groupA_idx else "B"
+            new_group = "A" if idx == current_groupA_idx else "B"
+            if new_group != getattr(ag, "group", None):
+                # スナップショットを取ってトランジション準備
+                ag.prev_color  = getattr(ag, "current_color", vector(1, 1, 1))
+                ag.prev_z      = ag.z
+                ag.prev_yaw    = ag.yaw
+                ag.prev_pitch  = ag.pitch
+                ag.current_color = vector(1.0, 0.3, 0.3) if new_group == "A" else vector(0.25, 0.6, 1.0)
+                ag.group = new_group
+                group_changed = True
 
-        # 3) 高さだけ先に更新
-        for ag in agents:
-            ag.update_tenge(sim_time, dt)
+        if group_changed:
+            is_transitioning   = True
+            transition_start   = sim_time
+            transition_duration= 1.0     # フェード時間 [s]
 
-        # 4) 向き＆ジオメトリ更新
+        # ─────────────────────────────────────────────
+        # 3) 上下運動だけ更新
+        # ─────────────────────────────────────────────
         for ag in agents:
-            # ── A: GroupB は GroupA の方を向く、GroupA は今の向きを維持 ──
+            ag.update_tenge(sim_time, dt)      # ← ここで ag.z が更新される
+
+        # ─────────────────────────────────────────────
+        # 4) 向きとジオメトリ
+        # ─────────────────────────────────────────────
+        for ag in agents:
+            # A) Group-B はリーダー (A) を向く
             if ag.group == "B":
                 lead = agents[current_groupA_idx]
                 dx, dy = lead.x - ag.x, lead.y - ag.y
-                dz      = lead.z - ag.z
+                dz     = lead.z - ag.z
                 base_yaw   = math.degrees(math.atan2(dy, dx))
                 base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
             else:
-                base_yaw   = ag.yaw
-                base_pitch = ag.pitch
+                base_yaw, base_pitch = ag.yaw, ag.pitch  # Group-A は向きを維持
 
-            # ── B: 最新 Z を反映して「観客検出があればそこで再計算」 ──
-            closest = None
-            md      = detect_radius
+            # B) 近くに観客がいればそちらを優先
+            closest, md = None, detect_radius
             for p in audiences:
                 d = math.hypot(p.x - ag.x, p.y - ag.y)
                 if d < md:
-                    md      = d
-                    closest = p
+                    md, closest = d, p
             if closest:
                 dx2, dy2 = closest.x - ag.x, closest.y - ag.y
-                dz2      = closest.height - ag.z      # ← update_tenge 後の ag.z
+                dz2      = closest.height - ag.z
                 tgt_yaw   = math.degrees(math.atan2(dy2, dx2))
                 tgt_pitch = math.degrees(math.atan2(dz2, math.hypot(dx2, dy2)))
             else:
-                tgt_yaw   = base_yaw
-                tgt_pitch = base_pitch
+                tgt_yaw, tgt_pitch = base_yaw, base_pitch
 
-            # ── C: イージングでスムーズに追従 ───────────────
+            # C) イージング
             k = min(1.0, ease_speed * dt)
             dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
             ag.yaw   += dyaw * k
             ag.pitch += (tgt_pitch - ag.pitch) * k
 
-            # ── D: 最終ジオメトリ反映 ───────────────────
-            ax  = ag.compute_axis() * agent_length
-            ctr = vector(ag.x, ag.y, ag.z)
-            ag.body.pos   = ctr - ax/2
-            ag.body.axis  = ax
-            ag.cable.pos  = ctr
-            ag.cable.axis = vector(0,0, maxZ - ag.z)
-            # ag.dot2d.pos  = vector(ag.x, ag.y, 0)
+            # D) ジオメトリ
+            axis = ag.compute_axis() * agent_length
+            ctr  = vector(ag.x, ag.y, ag.z)
+            ag.body.pos  = ctr - axis/2
+            ag.body.axis = axis
+            ag.cable.pos = ctr
+            ag.cable.axis = vector(0, 0, maxZ - ag.z)
+            # 天上天下モードのメインループ内、位置を更新し終えた直後で呼び出す
+            send_group_stats(agents, minZ, maxZ)  
 
-        # 5) 色＆MQTT（これまでどおり）
-        for ag in agents:
-            ag.display()
-            ag.set_leds_tenge(sim_time, dt)
-            mqtt_client.publish(
-                f"ps/{ag.node_id}",
-                struct.pack("<3f",
-                            round(ag.z,     2),
-                            round(ag.pitch, 2),
-                            round(ag.yaw,   2))
-            )
-            rgb = [int(c*255) for c in (ag.current_color.x,
-                                        ag.current_color.y,
-                                        ag.current_color.z)]
-            mqtt_client.publish(f"cl/{ag.node_id}", bytes(rgb))
-
-        # ――――― トランジション適用 ―――――
+        # ─────────────────────────────────────────────
+        # 5) 色フェード or 通常 LED
+        # ─────────────────────────────────────────────
         if is_transitioning:
             p = min(1.0, (sim_time - transition_start) / transition_duration)
             for ag in agents:
-                # 座標・向き・色の補間（既存）
-                z = ag.prev_z * (1-p) + ag.z * p
-                yaw   = ag.prev_yaw   * (1-p) + ag.yaw   * p
-                pitch = ag.prev_pitch * (1-p) + ag.pitch * p
-                col = ag.prev_color * (1-p) + ag.current_color * p
-
-                # 1) 軸ベクトル再生成
-                pr, yr = math.radians(pitch), math.radians(yaw)
-                axis = vector(math.cos(pr)*math.cos(yr),
-                            math.cos(pr)*math.sin(yr),
-                            math.sin(pr)) * agent_length
-                ctr = vector(ag.x, ag.y, z)
-
-                # 2) 本体・ケーブル・2Dドット
-                ag.body.pos  = ctr - axis/2
-                ag.body.axis = axis
-                ag.cable.pos = ctr
-                ag.cable.axis= vector(0,0,maxZ-z)
-                # ag.dot2d.pos = vector(ag.x, ag.y, 0)
-
-                # 3) LED の 3D/2D 両方を再配置
-                u = axis.norm()
-                for ld3, ld2, offset in ag.leds:
-                    # 3D LED
-                    ld3.pos = ctr + u * (agent_length * offset)
-                    # 2D LED
-                    ld2.pos = vector(
-                        ag.x + u.x * (agent_length * offset),
-                        ag.y + u.y * (agent_length * offset),
-                        0
-                    )
-
-                # 4) 色の補間反映
+                col = ag.prev_color * (1 - p) + ag.current_color * p
                 ag.body.color = col
                 for ld3, ld2, _ in ag.leds:
                     ld3.color = ld2.color = col
-
             if p >= 1.0:
                 is_transitioning = False
+        else:
+            for ag in agents:
+                ag.set_leds_tenge(sim_time, dt)   # 時間・高さ依存の発光
+
+        # ─────────────────────────────────────────────
+        # 6) 描画 & MQTT 送信
+        # ─────────────────────────────────────────────
+        for ag in agents:
+            ag.display()
+            send_queue.put(ag)
+
 
     elif mode_menu.selected == "鬼さんこちらモード":
         # 1) 混雑チェック
@@ -1447,22 +1544,11 @@ while True:
                 oni_target_aud   = None
                 oni_state        = "idle"
 
-        # 4) MQTT 出力
+        # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
         for ag in agents:
-            mqtt_client.publish(
-                f"ps/{ag.node_id}",
-                struct.pack("<3f",
-                            round(ag.z,     2),
-                            round(ag.pitch, 2),
-                            round(ag.yaw,   2))
-            )
-            r = int(ag.current_color.x * 255)
-            g = int(ag.current_color.y * 255)
-            b = int(ag.current_color.z * 255)
-            r = max(0, min(255, r))
-            g = max(0, min(255, g))
-            b = max(0, min(255, b))
-            mqtt_client.publish(f"cl/{ag.node_id}", bytes([r, g, b]))
+            ag.display()
+            ag.set_leds()
+        send_queue.put(ag)
 
     elif mode_menu.selected == "魚群モード":
         # 0) 流れベクトル（逆向き）を先に求める
@@ -1527,91 +1613,195 @@ while True:
             flick = 0.7 + 0.3*math.sin(sim_time*10 + phase)
             r,g,b = colorsys.hsv_to_rgb(hue, 0.8, flick)
             col   = vector(r,g,b)
+            ag.current_color = col
             for ld3, ld2, _ in ag.leds:
                 ld3.color = ld2.color = col
+            
+            # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
+            # for ag in agents:
+                # ag.display()
+                # ag.set_leds()
+            send_queue.put(ag)
 
     # ------------------------------------------------------------
     elif mode_menu.selected == "蜂シマーモード":
     # ------------------------------------------------------------
+        # 基本
+        shim_base_freq_hz = 1.0
+        shim_base_amp_m   = 0.005
+        shim_wave_speed   = 1.2
+        shim_trigger_mean = 6.0
+        shim_front_tol    = 0.35
 
-        # 0) 波をランダム発生（色も一緒に決めて保存）
+        # 水平回転
+        yaw_peak_deg  = 90.0
+        yaw_rise_s    = 0.5
+        yaw_decay_tau = 0.8
+
+        # ドロップ通常
+        drop_m_norm   = 0.15
+        drop_down_s_n = 0.2
+        drop_up_s_n   = 1.0
+        drop_total_n  = drop_down_s_n + drop_up_s_n
+
+        # レアドロップ (0.5 %)
+        rare_prob     = 0.002
+        rare_factor   = 6
+        drop_m_rare   = drop_m_norm * rare_factor          # 0.9 m
+        drop_down_s_r = drop_down_s_n * rare_factor        # 1.2 s
+        drop_up_s_r   = drop_up_s_n   * rare_factor        # 6 s
+        drop_total_r  = drop_down_s_r + drop_up_s_r
+
+        # 色 & フラッシュ
+        color_rise_s   = 0.5
+        flash_rise_s   = 0.2
+        flash_decay_s  = 1.5
+        white_mix_peak = 0.5
+        bright_peak    = 0.5
+
+        # 0) 波トリガ（震源→中心 方角を保存）
         if sim_time >= next_shim_time:
-            h  = random.random()                 # 0–1 ランダム色相
-            r,g,b = colorsys.hsv_to_rgb(h, 0.9, 1.0)
-            wave_color = vector(r,g,b)
+            hue = random.random()
+            r,g,b = colorsys.hsv_to_rgb(hue, 1, 1)
+            wave_col = vector(r,g,b)
             ori = random.choice(agents)
-            wave_fronts.append((ori.x, ori.y, sim_time, wave_color))
-            next_shim_time = sim_time + random.expovariate(1.0 / shim_trigger_mean)
+            wdir = math.degrees(math.atan2(centerY-ori.y, centerX-ori.x))
+            wave_fronts.append((ori.x, ori.y, sim_time, wave_col, wdir))
+            next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
 
-        # 1) 各筒を走査
+        # 1) エージェント更新
         for ag in agents:
-            # A) 基本垂直振動
-            z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time
-                                + ag.idx*0.7) * shim_base_amp_m
+            z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7) * shim_base_amp_m
 
-            # B) 初回プロパティ確保
-            if not hasattr(ag, "yaw0"):
+            # 初期化
+            if not hasattr(ag,"yaw0"):
                 ag.yaw0 = ag.yaw
                 ag.z0   = ag.z
-                ag.kick_time  = -999.0
-                ag.kick_peak  = 0.0
-                ag.current_color = vector(1,1,0)   # 初期黄色
-                ag.color_from   = ag.current_color
-                ag.color_to     = ag.current_color
-                ag.color_t0     = -999.0
+                ag.face_dir = ag.yaw0
+                ag.kick_time = ag.drop_time = ag.color_t0 = -999.0
+                ag.kick_peak = 0.0
+                ag.drop_mode = "norm"          # "norm" or "rare"
+                ag.current_color = vector(0.5,0.5,0.0)
+                ag.color_from = ag.color_to = ag.current_color
+                #  ▼▼ ここを追加 ▼▼
+                ag.drop_mode  = "norm"
+                ag.drop_down_s = drop_down_s_n
+                ag.drop_up_s   = drop_up_s_n
+                ag.drop_total  = drop_total_n
+                ag.drop_m      = drop_m_norm
+                #  ▲▲ ここまで ▲▲
 
-            # C) 波フロント到達判定
-            for ox, oy, t0, wcol in wave_fronts:
-                tau   = sim_time - t0
-                front = shim_wave_speed * tau
-                d = math.hypot(ag.x - ox, ag.y - oy)
-                if 0 < tau < 3.0 and abs(d - front) < shim_front_tol:
-                    # 垂直揺れ増幅 + 回転キック
-                    z_off       += shim_base_amp_m * 4
-                    ag.kick_time = sim_time
-                    ag.kick_peak = shim_kick_yaw_deg
 
-                    # 色をグラデーションで wcol へ
-                    ag.color_from = ag.current_color
-                    ag.color_to   = wcol
-                    ag.color_t0   = sim_time
-
-            # D) 回転イージング
-            age = sim_time - ag.kick_time
-            if age < 0:
-                yaw_off = 0.0
-            elif age <= shim_kick_rise:
-                yaw_off = ag.kick_peak * (age / shim_kick_rise)
+            # レアドロップが完了するまで波を無視
+            if ag.drop_mode == "rare" and sim_time - ag.drop_time < drop_total_r:
+                wave_hit_allowed = False
             else:
-                yaw_off = ag.kick_peak * math.exp(-(age-shim_kick_rise)/shim_kick_decay)
+                wave_hit_allowed = True
+                ag.drop_mode = "norm"          # レア終了後リセット
 
-            # E) 観客近接で強調
-            for p in audiences:
-                if math.hypot(p.x - ag.x, p.y - ag.y) < 1.0:
-                    z_off  *= 2
-                    yaw_off*= 1.5
-                    break
+            # 波ヒット判定
+            if wave_hit_allowed:
+                for ox,oy,t0,wcol,wdir in wave_fronts:
+                    tau   = sim_time - t0
+                    front = shim_wave_speed * tau
+                    if 0 < tau < 3 and abs(math.hypot(ag.x-ox,ag.y-oy)-front) < shim_front_tol:
+                        # ─ 選択：レア or 通常 ─
+                        if random.random() < rare_prob:
+                            # --------  レアドロップ  --------
+                            ag.drop_mode = "rare"
+                            ag.drop_m      = random.uniform(0.45, 1.20)   # 45–120 cm
+                            ag.drop_down_s = drop_down_s_n * rare_factor  # 1.2 s
+                            ag.drop_up_s   = drop_up_s_n   * rare_factor  # 6.0 s
+                            ag.drop_total  = ag.drop_down_s + ag.drop_up_s
+                        else:
+                            # --------  通常ドロップ  --------
+                            ag.drop_mode = "norm"
+                            ag.drop_m      = drop_m_norm
+                            ag.drop_down_s = drop_down_s_n
+                            ag.drop_up_s   = drop_up_s_n
+                            ag.drop_total  = drop_total_n
 
-            # F) 色をグラデーション補間
-            if sim_time - ag.color_t0 < color_rise_time:
-                tcol = (sim_time - ag.color_t0) / color_rise_time
-                ag.current_color = ag.color_from*(1-tcol) + ag.color_to*tcol
+
+                        
+
+                        z_off       += shim_base_amp_m * 4
+                        ag.kick_time = sim_time
+                        ag.kick_peak = yaw_peak_deg
+                        ag.drop_time = sim_time
+                        ag.face_dir  = wdir
+                        ag.color_from = ag.current_color
+                        ag.color_to   = wcol * 0.5
+                        ag.color_t0   = sim_time
+                        break   # 1 波で十分
+
+            # ─ 回転 ─
+            k_age = sim_time - ag.kick_time
+            yaw_kick = (0 if k_age < 0 else
+                        yaw_peak_deg * k_age/yaw_rise_s if k_age<=yaw_rise_s else
+                        yaw_peak_deg * math.exp(-(k_age-yaw_rise_s)/yaw_decay_tau))
+            desired_yaw = ag.face_dir + yaw_kick
+            dyaw = ((desired_yaw - ag.yaw + 540)%360) - 180
+            ag.yaw += dyaw * 0.1
+
+            # ─ ドロップ ─
+            d_age = sim_time - ag.drop_time
+            if d_age < 0:
+                drop_off = 0
+            elif d_age <= ag.drop_down_s:
+                drop_off = -ag.drop_m * (d_age / ag.drop_down_s)
+            elif d_age <= ag.drop_total:
+                drop_off = -ag.drop_m * (1 - (d_age - ag.drop_down_s)/ag.drop_up_s)
             else:
-                ag.current_color = ag.color_to
+                drop_off = 0
 
-            # G) 位置・向き・色反映
-            ag.z   = clamp(ag.z0 + z_off, minZ, maxZ)
-            ag.yaw = ag.yaw0 + yaw_off
-            ag.pitch = 0.0
+            # ─ 色基本 ─
+            if sim_time - ag.color_t0 < color_rise_s:
+                t = (sim_time - ag.color_t0)/color_rise_s
+                base_col = ag.color_from*(1-t) + ag.color_to*t
+            else:
+                base_col = ag.color_to
+
+            # ─ フラッシュ ─
+            f_age = sim_time - ag.drop_time
+            if 0 <= f_age <= flash_rise_s + flash_decay_s:
+                if f_age <= flash_rise_s:
+                    r = f_age/flash_rise_s
+                else:
+                    r = 1 - (f_age - flash_rise_s)/flash_decay_s
+                mix = white_mix_peak*r
+                inc = 1 + bright_peak*r
+                col = (base_col*(1-mix) + vector(1,1,1)*mix) * inc
+                col = vector(min(1,col.x),min(1,col.y),min(1,col.z))
+            else:
+                col = base_col
+
+            ag.current_color = col
+
+            # ─ 近接観客 強調 (通常のみ) ─
+            if ag.drop_mode == "norm":
+                for p in audiences:
+                    if math.hypot(p.x-ag.x,p.y-ag.y) < 1:
+                        z_off  *= 2
+                        break
+
+            # ─ 反映 ─
+            ag.z   = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
+            ag.pitch = 0
             update_geometry(ag)
-
             for l3,l2,_ in ag.leds:
                 l3.color = l2.color = ag.current_color
 
-        # 2) 古い波を 8 s で破棄
-        wave_fronts[:] = [(ox,oy,t0,c) for (ox,oy,t0,c) in wave_fronts
-                            if sim_time - t0 < 8.0]
+            # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
+            for ag in agents:
+                ag.display()
+                ag.set_leds()
+            send_queue.put(ag)
+
+        # 2) 古い波 8 s で削除
+        wave_fronts[:] = [(x,y,t,c,d) for (x,y,t,c,d) in wave_fronts
+                          if sim_time - t < 8]
     # ------------------------------------------------------------
+    
 
     apply_sound_reaction()     # ★追加★
 

@@ -13,7 +13,7 @@ W = int((ROOM_X_MAX - ROOM_X_MIN) * SCALE)
 H = int((ROOM_Y_MAX - ROOM_Y_MIN) * SCALE)
 
 # ─── MQTT ─────────────────────────────────────────────────────
-BROKER = "localhost"
+BROKER = "192.168.1.2"
 TOPIC_CA = "ca"
 TOPIC_SS = "ss"
 
