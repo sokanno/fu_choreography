@@ -18,9 +18,14 @@ import struct
 import threading
 import queue
 
+#=========================================================
+# ここはどこか
+place = "venue"  # "venue" or else
+#=========================================================
+
 # SuperCollider サーバーのホストとポート
 SC_HOST = "127.0.0.1"
-SC_PORT = 57121
+SC_PORT = 57120 # 57120 is SupperCollider, max uses 57121
 osc_client = udp_client.SimpleUDPClient(SC_HOST, SC_PORT)
 
 # ─── モード切替トランジション用 ─────────────────────
@@ -135,13 +140,14 @@ oni_target_color    = vector(1,1,1)  # 2 秒後に向かう反対色
 
 # --------------------------------------------------------
 # Audience 表示モード
-#   False  … 既存のランダム移動シミュレーション
-#   True   … MQTT “ca” 座標で直接配置（センサーモード）
+#   False … ランダム歩行（既存）
+#   True  … MQTT “ca” 座標で直接配置（センサーモード）
 # --------------------------------------------------------
-sensor_mode        = False      # 既存
-sensor_person      = None       # 1 人だけ使い回す
-last_aud_msg_time  = 0.0        # 最後に ca を受信した時刻
-PRESENCE_TIMEOUT   = 0.8        # 秒：これを過ぎたら非表示
+sensor_mode         = True         # ← 変更なし
+sensor_people: list['Audience'] = []   # ★ New: 複数人用リスト
+last_aud_msg_time   = -999.0
+PRESENCE_TIMEOUT    = 1.0           # 秒：信号が途絶えてから非表示まで
+
 
 # ─── Sound‑reaction globals ──────────────────────────────────
 last_sound_coords   = None     # (x, y) in m
@@ -184,12 +190,19 @@ wave_fronts = []          # [(origin_i, origin_j, start_time)]
 color_rise_time   = 0.5      # 色をグラデーションする秒数
 
 
+#   人が来なくなってから “何秒” で全員を隠すか
+PRESENCE_TIMEOUT = 1.0        # ★ 1 秒
+last_aud_msg_time = -999.0
+
+
 # ========================================================
 # MQTT セットアップ
 # ========================================================
 mqtt_client = mqtt.Client()
-# mqtt_client.connect("127.0.0.1", 1883, 60)
-mqtt_client.connect("192.168.1.2", 1883, 60)
+if place == "venue":
+    mqtt_client.connect("192.168.1.2", 1883, 60)
+else:
+    mqtt_client.connect("127.0.0.1", 1883, 60)
 mqtt_client.loop_start()
 
 # ========================================================
@@ -274,24 +287,25 @@ mode_menu.visible = False  # ←これだけで UI に表示されなくなる
 wtext(text='<br><br>')
 
 def toggle_sensor(b):
-    global sensor_mode, sensor_person, audiences
+    global sensor_mode, sensor_people, audiences
     sensor_mode = not sensor_mode
     b.text = "Sensor ON" if sensor_mode else "Sensor OFF"
     print("Sensor mode =", sensor_mode)
 
     if sensor_mode:
-        # ---- これからセンサー入力に切り替える ----
-        # 既存観客オブジェクトは全部消す
-        for p in audiences:
+        # 既存オブジェクトをすべて不可視にしてリストを空に
+        for p in audiences + sensor_people:
             if hasattr(p, "body"):
-                p.body.visible  = False
-                p.head.visible  = False
+                p.body.visible  = p.head.visible = False
                 p.dot2d.visible = False
         audiences.clear()
-        sensor_person = None       # 新しく作り直させる
+        sensor_people.clear()       # まっさらに
     else:
-        # ---- シミュレーションに戻る ----
-        sensor_person = None       # もう使わない
+        # シミュレーションに戻るとき：センサー用オブジェクトを消す
+        for p in sensor_people:
+            p.body.visible = p.head.visible = p.dot2d.visible = False
+        sensor_people.clear()
+
 
 sensor_btn = button(
     canvas=ui,
@@ -322,6 +336,9 @@ class Agent:
 
         self.yaw   = random.uniform(0,360)
         self.pitch = random.uniform(-60,60)
+
+        self.drop_time  = float('-inf')   # ← 追加：これで常に存在
+        self.drop_total = 0.0
 
         # 3D body + cable
         ax  = self.compute_axis() * agent_length
@@ -713,42 +730,43 @@ audiences = []  # 最初は空
 # ───────────────────────────────────────────────
 sensor_person = None        # 1 人だけ描画する想定（複数なら list に）
 
-def handle_audience(coords):
-    global sensor_person, audiences, last_aud_msg_time
-    x, y = coords
-    last_aud_msg_time = sim_time          # ← 受信時刻を記録
+
+def handle_audience(coords_list: list[tuple[float, float]]):
+    """
+    coords_list … [(x,y), (x,y), …]  0 人なら空リスト
+    """
+    global sensor_people, audiences, last_aud_msg_time
+    last_aud_msg_time = sim_time
 
     if not sensor_mode:
-        return
+        return                       # OFF のときは無視
 
-    # ----- 1人目を生成（まだ無い or 削除済みのときだけ） -----
-    if (sensor_person is None or
-        not hasattr(sensor_person, "body")):
-
-        # 既存のリストを空にしてから 1 人追加
-        for p in audiences:
-            if hasattr(p, "body"):
-                p.body.visible  = p.head.visible = False
-                p.dot2d.visible = False
-        audiences.clear()
-
+    # (A) 人数合わせ
+    n_recv, n_curr = len(coords_list), len(sensor_people)
+    if n_recv > n_curr:                      # 追加生成
         x_range = (centerX - span/2, centerX + span/2)
         y_range = (centerY - span/2, centerY + span/2)
-        sensor_person = Audience(scene3d, scene2d,
-                                 x_range, y_range,
-                                 height=1.7, radius=0.15, speed=0.0)
-        audiences.append(sensor_person)
+        for _ in range(n_recv - n_curr):
+            sensor_people.append(
+                Audience(scene3d, scene2d,
+                         x_range, y_range,
+                         height=1.7, radius=0.15, speed=0.0)
+            )
+    elif n_recv < n_curr:                    # 余分を隠す
+        for p in sensor_people[n_recv:]:
+            p.body.visible = p.head.visible = p.dot2d.visible = False
+        sensor_people[:] = sensor_people[:n_recv]
 
-    # ----- 位置だけ更新 -----
-    sensor_person.x, sensor_person.y = x, y
-    sensor_person.body.pos = vector(x, y, 0)
-    sensor_person.head.pos = vector(x, y,
-                                    sensor_person.cyl_h + sensor_person.radius)
-    sensor_person.dot2d.pos = vector(x, y, -0.1)
-    # 可視化を確実に ON
-    sensor_person.body.visible  = True
-    sensor_person.head.visible  = True
-    sensor_person.dot2d.visible = True
+    # (B) 座標更新
+    for (x, y), person in zip(coords_list, sensor_people):
+        person.x, person.y = x, y
+        person.body.pos = vector(x, y, 0)
+        person.head.pos = vector(x, y, person.cyl_h + person.radius)
+        person.dot2d.pos = vector(x, y, -0.1)
+        person.body.visible = person.head.visible = person.dot2d.visible = True
+
+    # (C) ほかのロジックが audiences を見る場合に備えて同期
+    audiences = sensor_people
 
 
 
@@ -776,7 +794,10 @@ def toggle_sensor(b):
         sensor_person.body.visible  = False
         sensor_person.head.visible  = False
         sensor_person.dot2d.visible = False
+        # --- 旧 ---
         sensor_person = None
+        # --- 新 ---
+        sensor_people: list[Audience] = []
 
 # ─── ジオメトリ＆LED 同期関数 ─────────────────────────────
 def update_geometry(ag):
@@ -843,7 +864,6 @@ def apply_sound_reaction():
 def clamp(v, lo, hi):        # ★ 追加 ★
     return max(lo, min(hi, v))
 
-
 def send_robot_data(agent):
     """
     agent: 各エージェントオブジェクト
@@ -851,7 +871,6 @@ def send_robot_data(agent):
     - z, pitch, yaw: float
     - current_color.x/y/z: 0.0–1.0
     """
-    
     # ---- MQTT 出力 ----
     # 位置・向き
     payload_pos = struct.pack("<3f",
@@ -945,8 +964,11 @@ start_osc_listener(ip="0.0.0.0", port=8000)
 print(">>> [main] returned from start_osc_listener()")
 
 # mqtt起動
-# client = start(broker_host="localhost", broker_port=1883)
-client = start(broker_host="192.168.1.2", broker_port=1883)
+if place == "venue":
+    client = start(broker_host="192.168.1.2", broker_port=1883)
+else:
+    client = start(broker_host="localhost", broker_port=1883)
+
 
 sim_time = noise_time = angle = 0.0
 dt = 1/20
@@ -1021,7 +1043,6 @@ while True:
             last_sound_coords = msg["coords"]
             last_sound_time   = sim_time
 
-
     # ─── Audience の再生成チェック ───────────────────
     # ※ センサーモード中は人数をいじらない
     if (not sensor_mode) and (len(audiences) != audience_count):
@@ -1048,8 +1069,6 @@ while True:
             for _ in range(audience_count)
         ]
 
-
-
     # ─── Audience の動作更新 ─────────────────────────
     if sensor_mode:
         # センサーモードでは自動移動させない
@@ -1058,8 +1077,6 @@ while True:
         # 既存のランダム移動シミュレーション
         for person in audiences:
             person.update(dt)
-
-
 
     # ─── 人検出でターゲット向きだけ計算 ────────────────────
     for ag in agents:
@@ -1084,7 +1101,7 @@ while True:
         # else 部分は不要です（上でクリア済み）
 
 
-
+    ###回る天井モード--------------------------------------------------------------------   
     if mode_menu.selected == "回る天井":
         # 1) 傾斜面の法線ベクトル
         a = radians(tilt_angle_deg)
@@ -1155,9 +1172,12 @@ while True:
             # ─── 7) 色更新（従来通り）────────────────────────
             global_hue   = (sim_time * color_speed) % 1.0
             height_ratio = (ag.z - minZp) / (maxZp - minZp)
-            if ag.id == 1:
-                # osc_client.send_message('/id1/z',       ag.z)          # 実座標
-                osc_client.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
+            if ag.node_id == "1":                 # ← 文字列比較
+                osc_client.send_message('/id1/z',       ag.z)          # 実座標
+                # osc_client.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
+            if ag.node_id == "46":                 # ← 文字列比較
+                osc_client.send_message('/id46/z',       ag.z)          # 実座標
+                # osc_client.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
             hue        = (global_hue + height_ratio * 0.125) % 1.0
             brightness = 1.0 - 0.5 * height_ratio
             r, g, b    = colorsys.hsv_to_rgb(hue, 1.0, brightness)
@@ -1166,7 +1186,7 @@ while True:
             ag.body.color = col
             for ld3, ld2, _ in ag.leds:
                 ld3.color = ld2.color = col
-            
+            ag.current_color = col   
             # ─── 5) 描画・LED・MQTT 出力 ───────────────────────────────
             # for ag in agents:
             #     ag.display()
@@ -1246,12 +1266,8 @@ while True:
             for ag in agents:
                 ag.display()
                 ag.set_leds()
+                send_queue.put(ag)
             
-            # ─── 6) MQTT 出力──────────────────────────────
-            send_queue.put(ag)
-
-
-
 
 
     elif mode_menu.selected == "天上天下モード":
@@ -1548,7 +1564,10 @@ while True:
         for ag in agents:
             ag.display()
             ag.set_leds()
-        send_queue.put(ag)
+            send_queue.put(ag)
+
+
+
 
     elif mode_menu.selected == "魚群モード":
         # 0) 流れベクトル（逆向き）を先に求める
@@ -1614,13 +1633,14 @@ while True:
             r,g,b = colorsys.hsv_to_rgb(hue, 0.8, flick)
             col   = vector(r,g,b)
             ag.current_color = col
-            for ld3, ld2, _ in ag.leds:
-                ld3.color = ld2.color = col
             
-            # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
-            # for ag in agents:
-                # ag.display()
-                # ag.set_leds()
+            
+        # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
+        for ag in agents:
+            ag.display()
+            # ag.set_leds()
+            for ld3, ld2, _ in ag.leds:
+                ld3.color = ld2.color = ag.current_color   # ← ここを修正
             send_queue.put(ag)
 
     # ------------------------------------------------------------
@@ -1722,7 +1742,9 @@ while True:
                             ag.drop_total  = drop_total_n
 
 
-                        
+                        # ここがヒット瞬間 ──────────────────────────
+                        osc_client.send_message("/shim", [int(ag.node_id)])   # <-- ここに追加
+                        # ────────────────────────────────────────────
 
                         z_off       += shim_base_amp_m * 4
                         ag.kick_time = sim_time
@@ -1791,11 +1813,24 @@ while True:
             for l3,l2,_ in ag.leds:
                 l3.color = l2.color = ag.current_color
 
-            # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
-            for ag in agents:
-                ag.display()
-                ag.set_leds()
+        # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
+        for ag in agents:
+            ag.display()
+            # ag.set_leds()
+            # ─ OSC 出力 ─────────────────────────────────────────
+            if 0 <= sim_time - ag.drop_time <= ag.drop_total:
+                # ★ 明るさは RGB の最大値をそのまま 0.0-1.0 で
+                brightness = max(ag.current_color.x,
+                                ag.current_color.y,
+                                ag.current_color.z)
+                # node_id は CSV の id 列が文字列なら int() で数値化
+                # osc_client.send_message(
+                #     "/shim",
+                #     [int(ag.node_id),          # ① ID
+                #     round(ag.z, 3),           # ② 高さ [m]  例: 1.732
+                #     round(brightness, 3)] )   # ③ 明るさ (0.0-1.0)
             send_queue.put(ag)
+
 
         # 2) 古い波 8 s で削除
         wave_fronts[:] = [(x,y,t,c,d) for (x,y,t,c,d) in wave_fronts
@@ -1813,12 +1848,21 @@ while True:
                                  centerY-camY,
                                  ((minZ+maxZ)/2)-cameraHeight)
     
-    # ループの最後のほう、筒の処理が終わった後などに追加
-    if sensor_mode and sensor_person is not None:
-        if sim_time - last_aud_msg_time > PRESENCE_TIMEOUT:
-            # しばらく信号が来ていない → 隠す
-            sensor_person.body.visible  = False
-            sensor_person.head.visible  = False
-            sensor_person.dot2d.visible = False
+    # # ループの最後のほう、筒の処理が終わった後などに追加
+    # if sensor_mode and sensor_person is not None:
+    #     if sim_time - last_aud_msg_time > PRESENCE_TIMEOUT:
+    #         # しばらく信号が来ていない → 隠す
+    #         sensor_person.body.visible  = False
+    #         sensor_person.head.visible  = False
+    #         sensor_person.dot2d.visible = False
+    #         for p in sensor_people:
+    #             p.body.visible = p.head.visible = p.dot2d.visible = False
 
-    
+    # --- after -------------------------------------------------
+    if sensor_mode and sensor_people:
+        if sim_time - last_aud_msg_time > PRESENCE_TIMEOUT:
+            for p in sensor_people:
+                p.body.visible = p.head.visible = p.dot2d.visible = False
+            # 2) 実体をリストから外す  ←★追加★
+            sensor_people.clear()
+            audiences.clear()          # audiences は検出ループで使われる

@@ -59,24 +59,53 @@ def on_connect(client, userdata, flags, rc):
         logging.error(f"[MQTT] Connection failed: rc={rc}")
 
 def on_message(client, userdata, msg):
-    """payload: 4 byte, '>hh' (big‑endian int16 ×2)"""
+    """
+    payload : 4 byte × N
+              1人  -> >hh
+              2人  -> >hhhh
+              3人  -> >hhhhhh   …という可変長
+    """
+    logging.debug(
+        f"[RAW] topic={msg.topic} len={len(msg.payload)}  "
+        f"payload(hex)={msg.payload.hex(' ')}"
+    )
+
     try:
-        if len(msg.payload) != 4:
+        # ---- ここを追加 ----
+        if len(msg.payload) == 0:
+            # 空メッセージ → 「観測者なし」
+            msg_queue.put({
+                "topic"  : msg.topic,
+                "coords" : [],          # 空リストで表現
+                "time"   : time.time(),
+            })
+            logging.debug(f"[MQTT] {msg.topic} -> 0 person")
+            return                    # これ以上の処理は不要
+        # ---- ここまで ----
+        # 4 の倍数でなければ不正
+        if len(msg.payload) == 0 or len(msg.payload) % 4 != 0:
             raise ValueError(f"unexpected length {len(msg.payload)}")
 
-        x_cm, y_cm = struct.unpack(">hh", msg.payload)
-        x_m, y_m   = x_cm / 100.0, y_cm / 100.0
+        # (x_cm, y_cm) の列を取り出す
+        coords_m: list[tuple[float, float]] = [
+            (x_cm / 100.0, y_cm / 100.0)
+            for x_cm, y_cm in struct.iter_unpack(">hh", msg.payload)
+        ]
 
         msg_queue.put({
-            "topic" : msg.topic,
-            "coords": (x_m, y_m),
-            "time"  : time.time(),
+            "topic"  : msg.topic,
+            "coords" : coords_m,     # ← リストで格納
+            "time"   : time.time(),
         })
 
-        logging.debug(f"[MQTT] {msg.topic} -> ({x_m:.2f}, {y_m:.2f}) m")
+        logging.debug(
+            f"[MQTT] {msg.topic} -> {len(coords_m)} person(s): "
+            + ", ".join(f"({x:.2f}, {y:.2f})" for x, y in coords_m) + " m"
+        )
 
     except Exception as e:
         logging.warning(f"[MQTT] Bad payload on '{msg.topic}': {e}")
+
 
 # ---------------------------------------------------------------------------
 # パブリック API
@@ -140,9 +169,11 @@ if __name__ == "__main__":
     try:
         while True:
             for m in fetch_messages():
-                print(f"{m['topic']:>2}: (x={m['coords'][0]:.2f}, "
-                      f"y={m['coords'][1]:.2f}) [t={m['time']:.2f}]")
-            time.sleep(0.02)   # 50 fps 相当
+                for i, (x, y) in enumerate(m["coords"], start=1):
+                    print(f"{m['topic']}  P{i}: (x={x:.2f}, y={y:.2f}) "
+                        f"[t={m['time']:.2f}]")
+            time.sleep(0.02)
+
     except KeyboardInterrupt:
         logging.info("Stopping…")
     finally:
