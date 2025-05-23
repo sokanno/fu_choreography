@@ -873,16 +873,26 @@ def send_robot_data(agent):
     """
     # ---- MQTT 出力 ----
     # 位置・向き
-    payload_pos = struct.pack("<3f",
-                              round(agent.z, 2),
-                              round(agent.pitch, 2),
-                              round(agent.yaw,   2))
+    # ─ ① スケール＆クリップ ──────────────────────────
+    z_m       = max(minZ, min(maxZ, agent.z))
+    pitch_deg = max(-60.0, min(60.0, agent.pitch))
+    yaw_deg   = (agent.yaw % 360.0 + 360.0) % 360.0      # 0–360
+
+    mm     = int(z_m * 1000 + 0.5)          # 0–2800 → uint16_t
+    pitchC = int(pitch_deg * 100 + 0.5)     # -6000〜+6000 → int16_t
+    yawC   = int(yaw_deg   * 100 + 0.5)     # 0–35999 → uint16_t
+
+    # ─ ② パック (6 B) ────────────────────────────────
+    payload_pos = struct.pack("<HhH", mm, pitchC, yawC)
     mqtt_client.publish(f"ps/{agent.node_id}", payload_pos)
-    # 色
+
+    # ─ ③ 色は従来どおり 1 バイト ×3 ────────────────
     r = int(agent.current_color.x * 255)
     g = int(agent.current_color.y * 255)
     b = int(agent.current_color.z * 255)
     mqtt_client.publish(f"cl/{agent.node_id}", bytes([r, g, b]))
+    mqtt_client.publish(f"dl/{agent.node_id}", bytes([int(round((r+g+b)/3))]))
+
 
     # ---- OSC 出力 ----
     # SuperCollider の OSCFunc('/robot') に合わせて、
@@ -891,7 +901,7 @@ def send_robot_data(agent):
     # osc_client.send_message(
     #     "/robot",
     #     [agent.node_id,
-    #      agent.current_color.x,
+    #      agent.current_color.x,s
     #      agent.current_color.y,
     #      agent.current_color.z,
     #      agent.yaw,
