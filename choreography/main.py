@@ -20,13 +20,15 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "venue"  # "venue" or else
+place = "berlin"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
-SC_HOST = "127.0.0.1"
+HOST = "127.0.0.1"
 SC_PORT = 57120 # 57120 is SupperCollider, max uses 57121
-osc_client = udp_client.SimpleUDPClient(SC_HOST, SC_PORT)
+MX_PORT = 57121 # 57120 is SupperCollider, max uses 57121
+osc_client_sc = udp_client.SimpleUDPClient(HOST, SC_PORT)
+osc_client_max = udp_client.SimpleUDPClient(HOST, MX_PORT)
 
 # ─── モード切替トランジション用 ─────────────────────
 is_transitioning   = False
@@ -188,6 +190,7 @@ shim_kick_decay   = 0.8       # その後指数減衰 τ
 next_shim_time = 0.0      # 次トリガー時刻
 wave_fronts = []          # [(origin_i, origin_j, start_time)]
 color_rise_time   = 0.5      # 色をグラデーションする秒数
+wave_events = []
 
 
 #   人が来なくなってから “何秒” で全員を隠すか
@@ -952,17 +955,17 @@ def send_group_stats(agents, minZ, maxZ):
     # 高さの送信
     if groupA:
         avg_z_A = sum(ag.z for ag in groupA) / len(groupA)
-        osc_client.send_message('/groupA_height', norm_height(avg_z_A))
+        osc_client_max.send_message('/groupA_height', norm_height(avg_z_A))
     if groupB:
         avg_z_B = sum(ag.z for ag in groupB) / len(groupB)
-        osc_client.send_message('/groupB_height', norm_height(avg_z_B))
+        osc_client_max.send_message('/groupB_height', norm_height(avg_z_B))
 
     # groupA の X/Y も送る
     if groupA:
         avg_x_A = sum(ag.x for ag in groupA) / len(groupA)
         avg_y_A = sum(ag.y for ag in groupA) / len(groupA)
-        osc_client.send_message('/groupA_x', avg_x_A)
-        osc_client.send_message('/groupA_y', avg_y_A)
+        osc_client_max.send_message('/groupA_x', avg_x_A)
+        osc_client_max.send_message('/groupA_y', avg_y_A)
 
 
 # ========================================================
@@ -1132,8 +1135,8 @@ while True:
         # ★★★ ここに追加 ★★★
         sin_val = math.sin(sim_time)   # 任意で周波数掛け算
         cos_val = math.cos(sim_time)
-        osc_client.send_message('/sin', sin_val)
-        osc_client.send_message('/cos', cos_val)
+        osc_client_max.send_message('/sin', sin_val)
+        osc_client_max.send_message('/cos', cos_val)
         # ★★★★★★★★★★★★★
 
         # 3) 各エージェントごとに高さ固定＆向きイージング
@@ -1183,15 +1186,15 @@ while True:
             global_hue   = (sim_time * color_speed) % 1.0
             height_ratio = (ag.z - minZp) / (maxZp - minZp)
             if ag.node_id == "1":                 # ← 文字列比較
-                osc_client.send_message('/id1/z',       ag.z)          # 実座標
-                # osc_client.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
+                osc_client_max.send_message('/id1/z',       ag.z)          # 実座標
+                # osc_client_max.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
             if ag.node_id == "46":                 # ← 文字列比較
-                osc_client.send_message('/id46/z',       ag.z)          # 実座標
-                # osc_client.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
+                osc_client_max.send_message('/id46/z',       ag.z)          # 実座標
+                # osc_client_max.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
             hue        = (global_hue + height_ratio * 0.125) % 1.0
             brightness = 1.0 - 0.5 * height_ratio
             r, g, b    = colorsys.hsv_to_rgb(hue, 1.0, brightness)
-            osc_client.send_message('/hue', hue)   # ★ここを追加★
+            osc_client_max.send_message('/hue', hue)   # ★ここを追加★
             col        = vector(r, g, b)
             ag.body.color = col
             for ld3, ld2, _ in ag.leds:
@@ -1293,6 +1296,7 @@ while True:
             choices = list(range(len(agents)))
             choices.remove(current_groupA_idx)
             current_groupA_idx = random.choice(choices)
+            osc_client_max.send_message('/trig', 0)
         prev_z_diff = z_diff
 
         # ─────────────────────────────────────────────
@@ -1652,176 +1656,435 @@ while True:
             for ld3, ld2, _ in ag.leds:
                 ld3.color = ld2.color = ag.current_color   # ← ここを修正
             send_queue.put(ag)
-
     # ------------------------------------------------------------
     elif mode_menu.selected == "蜂シマーモード":
     # ------------------------------------------------------------
-        # 基本
+        # --- 1) 各種パラメータ（すでにあるので省略） ---
         shim_base_freq_hz = 1.0
         shim_base_amp_m   = 0.005
         shim_wave_speed   = 1.2
         shim_trigger_mean = 6.0
-        shim_front_tol    = 0.35
+        shim_front_tol    = 0.35    # このパラメータは使わなくなるかもしれません
 
-        # 水平回転
         yaw_peak_deg  = 90.0
         yaw_rise_s    = 0.5
         yaw_decay_tau = 0.8
 
-        # ドロップ通常
         drop_m_norm   = 0.15
         drop_down_s_n = 0.2
         drop_up_s_n   = 1.0
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
-        # レアドロップ (0.5 %)
         rare_prob     = 0.002
         rare_factor   = 6
-        drop_m_rare   = drop_m_norm * rare_factor          # 0.9 m
-        drop_down_s_r = drop_down_s_n * rare_factor        # 1.2 s
-        drop_up_s_r   = drop_up_s_n   * rare_factor        # 6 s
+        drop_m_rare   = drop_m_norm * rare_factor
+        drop_down_s_r = drop_down_s_n * rare_factor
+        drop_up_s_r   = drop_up_s_n   * rare_factor
         drop_total_r  = drop_down_s_r + drop_up_s_r
 
-        # 色 & フラッシュ
         color_rise_s   = 0.5
         flash_rise_s   = 0.2
         flash_decay_s  = 1.5
         white_mix_peak = 0.5
         bright_peak    = 0.5
 
-        # 0) 波トリガ（震源→中心 方角を保存）
+        # --- 2) 波発生（t0 を基準に各ノードの t_trigger を計算して wave_events に格納） ---
         if sim_time >= next_shim_time:
+            # 波の色・震源ノード・進行方向を決定
             hue = random.random()
-            r,g,b = colorsys.hsv_to_rgb(hue, 1, 1)
-            wave_col = vector(r,g,b)
+            r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
+            wave_col = vector(r, g, b)
+
             ori = random.choice(agents)
-            wdir = math.degrees(math.atan2(centerY-ori.y, centerX-ori.x))
-            wave_fronts.append((ori.x, ori.y, sim_time, wave_col, wdir))
+            wdir = math.degrees(math.atan2(centerY - ori.y, centerX - ori.x))
+
+            # 各ノードについて“トリガー時刻”を計算してリストに入れる
+            events = []
+            for ag in agents:
+                # 震源→エージェント間の距離
+                dist = math.hypot(ag.x - ori.x, ag.y - ori.y)
+
+                # 正確な到達時刻
+                t_trigger = sim_time + dist / shim_wave_speed
+
+                # 同一距離上のノードが完全同時に鳴らないように小さな乱数を足す
+                jitter = random.uniform(0.0, 0.05)
+                t_trigger += jitter
+
+                # 各イベントには「t_trigger / 該当エージェント / wave_color / wave_dir」をまとめておく
+                events.append((t_trigger, ag, wave_col, wdir))
+
+            # 時刻順にソートしてから wave_events にプッシュ
+            events.sort(key=lambda x: x[0])
+            wave_events.append({
+                'origin': (ori.x, ori.y),
+                't0': sim_time,
+                'events': events
+            })
+
+            # 次の波を発生させるタイミングを決定
             next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
 
-        # 1) エージェント更新
+        # --- 3) 各ノードの共通更新処理（「波ヒット判定」はここから外す） ---
         for ag in agents:
+            # z_off のベース（サイン波で上下振動）
             z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7) * shim_base_amp_m
 
-            # 初期化
-            if not hasattr(ag,"yaw0"):
-                ag.yaw0 = ag.yaw
-                ag.z0   = ag.z
-                ag.face_dir = ag.yaw0
-                ag.kick_time = ag.drop_time = ag.color_t0 = -999.0
-                ag.kick_peak = 0.0
-                ag.drop_mode = "norm"          # "norm" or "rare"
-                ag.current_color = vector(0.5,0.5,0.0)
-                ag.color_from = ag.color_to = ag.current_color
-                #  ▼▼ ここを追加 ▼▼
+            # (1) 初期化
+            if not hasattr(ag, "yaw0"):
+                ag.yaw0       = ag.yaw
+                ag.z0         = ag.z
+                ag.face_dir   = ag.yaw0
+                ag.kick_time  = ag.drop_time = ag.color_t0 = -999.0
+                ag.kick_peak  = 0.0
                 ag.drop_mode  = "norm"
+                ag.current_color = vector(0.5, 0.5, 0.0)
+                ag.color_from = ag.color_to = ag.current_color
+
+                # ここで通常ドロップのパラメータをセットしておく
+                ag.drop_mode   = "norm"
                 ag.drop_down_s = drop_down_s_n
                 ag.drop_up_s   = drop_up_s_n
                 ag.drop_total  = drop_total_n
                 ag.drop_m      = drop_m_norm
-                #  ▲▲ ここまで ▲▲
 
-
-            # レアドロップが完了するまで波を無視
+            # (2) レアドロップ中は「波の判定」を受けないフラグを立てる
             if ag.drop_mode == "rare" and sim_time - ag.drop_time < drop_total_r:
                 wave_hit_allowed = False
             else:
                 wave_hit_allowed = True
-                ag.drop_mode = "norm"          # レア終了後リセット
+                ag.drop_mode = "norm"  # レア期間を過ぎたら通常に戻す
 
-            # 波ヒット判定
-            if wave_hit_allowed:
-                for ox,oy,t0,wcol,wdir in wave_fronts:
-                    tau   = sim_time - t0
-                    front = shim_wave_speed * tau
-                    if 0 < tau < 3 and abs(math.hypot(ag.x-ox,ag.y-oy)-front) < shim_front_tol:
-                        # ─ 選択：レア or 通常 ─
-                        if random.random() < rare_prob:
-                            # --------  レアドロップ  --------
-                            ag.drop_mode = "rare"
-                            ag.drop_m      = random.uniform(0.45, 1.20)   # 45–120 cm
-                            ag.drop_down_s = drop_down_s_n * rare_factor  # 1.2 s
-                            ag.drop_up_s   = drop_up_s_n   * rare_factor  # 6.0 s
-                            ag.drop_total  = ag.drop_down_s + ag.drop_up_s
-                        else:
-                            # --------  通常ドロップ  --------
-                            ag.drop_mode = "norm"
-                            ag.drop_m      = drop_m_norm
-                            ag.drop_down_s = drop_down_s_n
-                            ag.drop_up_s   = drop_up_s_n
-                            ag.drop_total  = drop_total_n
+            # (3) ── 『波判定』をここから外し、wave_events でまとめて処理する ──  
 
-
-                        # ここがヒット瞬間 ──────────────────────────
-                        osc_client.send_message("/shim", [int(ag.node_id)])   # <-- ここに追加
-                        # ────────────────────────────────────────────
-
-                        z_off       += shim_base_amp_m * 4
-                        ag.kick_time = sim_time
-                        ag.kick_peak = yaw_peak_deg
-                        ag.drop_time = sim_time
-                        ag.face_dir  = wdir
-                        ag.color_from = ag.current_color
-                        ag.color_to   = wcol * 0.5
-                        ag.color_t0   = sim_time
-                        break   # 1 波で十分
-
-            # ─ 回転 ─
-            k_age = sim_time - ag.kick_time
+            # ── 回転処理 ─────────────────────────────────────────────────────
+            k_age    = sim_time - ag.kick_time
             yaw_kick = (0 if k_age < 0 else
-                        yaw_peak_deg * k_age/yaw_rise_s if k_age<=yaw_rise_s else
-                        yaw_peak_deg * math.exp(-(k_age-yaw_rise_s)/yaw_decay_tau))
+                        yaw_peak_deg * k_age / yaw_rise_s if k_age <= yaw_rise_s else
+                        yaw_peak_deg * math.exp(-(k_age - yaw_rise_s) / yaw_decay_tau))
             desired_yaw = ag.face_dir + yaw_kick
-            dyaw = ((desired_yaw - ag.yaw + 540)%360) - 180
+            dyaw = ((desired_yaw - ag.yaw + 540) % 360) - 180
             ag.yaw += dyaw * 0.1
 
-            # ─ ドロップ ─
+            # ── ドロップ処理 ─────────────────────────────────────────────────
             d_age = sim_time - ag.drop_time
             if d_age < 0:
                 drop_off = 0
             elif d_age <= ag.drop_down_s:
                 drop_off = -ag.drop_m * (d_age / ag.drop_down_s)
             elif d_age <= ag.drop_total:
-                drop_off = -ag.drop_m * (1 - (d_age - ag.drop_down_s)/ag.drop_up_s)
+                drop_off = -ag.drop_m * (1 - (d_age - ag.drop_down_s) / ag.drop_up_s)
             else:
                 drop_off = 0
 
-            # ─ 色基本 ─
+            # ── 色のベース計算 ─────────────────────────────────────────────
             if sim_time - ag.color_t0 < color_rise_s:
-                t = (sim_time - ag.color_t0)/color_rise_s
-                base_col = ag.color_from*(1-t) + ag.color_to*t
+                t = (sim_time - ag.color_t0) / color_rise_s
+                base_col = ag.color_from * (1 - t) + ag.color_to * t
             else:
                 base_col = ag.color_to
 
-            # ─ フラッシュ ─
+            # ── フラッシュ（光る）演出 ───────────────────────────────────────
             f_age = sim_time - ag.drop_time
             if 0 <= f_age <= flash_rise_s + flash_decay_s:
                 if f_age <= flash_rise_s:
-                    r = f_age/flash_rise_s
+                    r = f_age / flash_rise_s
                 else:
-                    r = 1 - (f_age - flash_rise_s)/flash_decay_s
-                mix = white_mix_peak*r
-                inc = 1 + bright_peak*r
-                col = (base_col*(1-mix) + vector(1,1,1)*mix) * inc
-                col = vector(min(1,col.x),min(1,col.y),min(1,col.z))
+                    r = 1 - (f_age - flash_rise_s) / flash_decay_s
+                mix = white_mix_peak * r
+                inc = 1 + bright_peak * r
+                col = (base_col * (1 - mix) + vector(1, 1, 1) * mix) * inc
+                col = vector(min(1, col.x), min(1, col.y), min(1, col.z))
             else:
                 col = base_col
 
             ag.current_color = col
 
-            # ─ 近接観客 強調 (通常のみ) ─
+            # ── 近接観客強調 (通常ドロップのみ) ─────────────────────────────────
             if ag.drop_mode == "norm":
                 for p in audiences:
-                    if math.hypot(p.x-ag.x,p.y-ag.y) < 1:
-                        z_off  *= 2
+                    if math.hypot(p.x - ag.x, p.y - ag.y) < 1:
+                        z_off *= 2
                         break
 
-            # ─ 反映 ─
-            ag.z   = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
+            # ── 各エージェントの最終的な z 座標 / pitch / 表示更新 ──────────────
+            ag.z     = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
             ag.pitch = 0
             update_geometry(ag)
-            for l3,l2,_ in ag.leds:
+            for l3, l2, _ in ag.leds:
                 l3.color = l2.color = ag.current_color
+
+        # --- 4) wave_events をチェックして、『sim_time >= t_trigger』のイベントだけを順次発火する ---
+        new_wave_events = []
+        for wave in wave_events:
+            remaining = []
+            for (t_trigger, ag, wcol, wdir) in wave['events']:
+                if sim_time >= t_trigger:
+                    # (a) ── 波にぶつかった瞬間の処理 ───────────────────────────
+                    atk  = random.uniform(0.003, 0.01)
+                    if ag.drop_mode == "rare":
+                        rel = 8.0
+                    else:
+                        rel  = random.uniform(0.4, 4.0)
+                    fAtk    = random.uniform(0.01, 0.5)
+                    vibRate = random.uniform(0.1, 10)
+                    vibDepth= random.uniform(0.01, 0.5)
+                    amp     = random.uniform(0.03, 0.08)
+
+                    osc_client_sc.send_message(
+                        "/shim",
+                        [int(ag.node_id), atk, rel, fAtk, vibRate, vibDepth, amp]
+                    )
+
+                    # z_off を強制的に大きくして跳ね上げ
+                    ag.z = clamp(ag.z + shim_base_amp_m * 4, minZ, maxZ)
+
+                    # ノードのステートを初期化／更新
+                    ag.kick_time  = sim_time
+                    ag.kick_peak  = yaw_peak_deg
+                    ag.drop_time  = sim_time
+                    ag.face_dir   = wdir
+                    ag.color_from = ag.current_color
+                    ag.color_to   = wcol * 0.5
+                    ag.color_t0   = sim_time
+
+                    # **ドロップモード（通常／レア）は事前に events リストへ入れておいてもよいし、
+                    #   ここで再度判定しても問題ない。例として下記は「常に通常ドロップ」にする場合：**
+                    # ag.drop_mode  = "norm"
+                    # ag.drop_m     = drop_m_norm
+                    # ag.drop_down_s= drop_down_s_n
+                    # ag.drop_up_s  = drop_up_s_n
+                    # ag.drop_total = drop_total_n
+
+                    # ────────────────────────────────────────────────────────────
+                else:
+                    remaining.append((t_trigger, ag, wcol, wdir))
+
+            # まだ消費していないイベントが残っていれば続行
+            if remaining:
+                wave['events'] = remaining
+                new_wave_events.append(wave)
+            # すべて消費済みなら、この波は破棄される
+
+        wave_events = new_wave_events
+    # # ------------------------------------------------------------
+    # elif mode_menu.selected == "蜂シマーモード":
+    # # ------------------------------------------------------------
+    #     # 基本
+    #     shim_base_freq_hz = 1.0
+    #     shim_base_amp_m   = 0.005
+    #     shim_wave_speed   = 1.2
+    #     shim_trigger_mean = 6.0
+    #     shim_front_tol    = 0.35
+
+    #     # 水平回転
+    #     yaw_peak_deg  = 90.0
+    #     yaw_rise_s    = 0.5
+    #     yaw_decay_tau = 0.8
+
+    #     # ドロップ通常
+    #     drop_m_norm   = 0.15
+    #     drop_down_s_n = 0.2
+    #     drop_up_s_n   = 1.0
+    #     drop_total_n  = drop_down_s_n + drop_up_s_n
+
+    #     # レアドロップ (0.5 %)
+    #     rare_prob     = 0.002
+    #     rare_factor   = 6
+    #     drop_m_rare   = drop_m_norm * rare_factor          # 0.9 m
+    #     drop_down_s_r = drop_down_s_n * rare_factor        # 1.2 s
+    #     drop_up_s_r   = drop_up_s_n   * rare_factor        # 6 s
+    #     drop_total_r  = drop_down_s_r + drop_up_s_r
+
+    #     # 色 & フラッシュ
+    #     color_rise_s   = 0.5
+    #     flash_rise_s   = 0.2
+    #     flash_decay_s  = 1.5
+    #     white_mix_peak = 0.5
+    #     bright_peak    = 0.5
+
+    #     # 0) 波トリガ（震源→中心 方角を保存）
+    #     # if sim_time >= next_shim_time:
+    #     #     hue = random.random()
+    #     #     r,g,b = colorsys.hsv_to_rgb(hue, 1, 1)
+    #     #     wave_col = vector(r,g,b)
+    #     #     ori = random.choice(agents)
+    #     #     wdir = math.degrees(math.atan2(centerY-ori.y, centerX-ori.x))
+    #     #     wave_fronts.append((ori.x, ori.y, sim_time, wave_col, wdir))
+    #     #     next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
+    #     # 0) 波トリガ（震源→中心 方角を保存 かつ、各エージェントの t_trigger を事前計算して wave_events に入れる）
+    #     if sim_time >= next_shim_time:
+    #         # --- 1) 波の色と震源エージェントを決定 ---
+    #         hue = random.random()
+    #         r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
+    #         wave_col = vector(r, g, b)
+
+    #         ori = random.choice(agents)
+    #         # “波の進行方向”として震源からセンターを見る角度を使う
+    #         wdir = math.degrees(math.atan2(centerY - ori.y, centerX - ori.x))
+
+    #         # --- 2) 各エージェントについてトリガー時刻を計算 ---
+    #         events = []  # この波に関する 全ノードの(t_trigger, agent, wave_color, wave_dir) を入れる
+    #         for ag in agents:
+    #             # 震源(ori.x, ori.y) から ag までの距離
+    #             dist = math.hypot(ag.x - ori.x, ag.y - ori.y)
+
+    #             # 正確な到達時刻 = 現在時刻 + (距離 ÷ 波速)
+    #             t_trigger = sim_time + dist / shim_wave_speed
+
+    #             # ...同一の半径距離にあるノード同士が完全同時に鳴らないよう、
+    #             #    小さなジッタ(乱数)を加えることもできる（例：0.0～0.05秒の間でランダム）
+    #             jitter = random.uniform(0.0, 0.05)  # お好みで調整
+    #             t_trigger += jitter
+
+    #             # “この波でこのエージェントをトリガーするときに必要な情報”をまとめておく
+    #             events.append((t_trigger, ag, wave_col, wdir))
+
+    #         # --- 3) トリガーイベントを時刻順でソートして wave_events に追加 ---
+    #         events.sort(key=lambda x: x[0])
+    #         wave_events.append({
+    #             'origin': (ori.x, ori.y),
+    #             'events': events,
+    #             't0': sim_time,
+    #         })
+
+    #         # 次の波をいつ発生させるか
+    #         next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
+
+    #     # 1) エージェント更新
+    #     for ag in agents:
+    #         z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7) * shim_base_amp_m
+
+    #         # 初期化
+    #         if not hasattr(ag,"yaw0"):
+    #             ag.yaw0 = ag.yaw
+    #             ag.z0   = ag.z
+    #             ag.face_dir = ag.yaw0
+    #             ag.kick_time = ag.drop_time = ag.color_t0 = -999.0
+    #             ag.kick_peak = 0.0
+    #             ag.drop_mode = "norm"          # "norm" or "rare"
+    #             ag.current_color = vector(0.5,0.5,0.0)
+    #             ag.color_from = ag.color_to = ag.current_color
+    #             #  ▼▼ ここを追加 ▼▼
+    #             ag.drop_mode  = "norm"
+    #             ag.drop_down_s = drop_down_s_n
+    #             ag.drop_up_s   = drop_up_s_n
+    #             ag.drop_total  = drop_total_n
+    #             ag.drop_m      = drop_m_norm
+    #             #  ▲▲ ここまで ▲▲
+
+
+    #         # レアドロップが完了するまで波を無視
+    #         if ag.drop_mode == "rare" and sim_time - ag.drop_time < drop_total_r:
+    #             wave_hit_allowed = False
+    #         else:
+    #             wave_hit_allowed = True
+    #             ag.drop_mode = "norm"          # レア終了後リセット
+
+    #         # 波ヒット判定
+    #         if wave_hit_allowed:
+    #             for ox,oy,t0,wcol,wdir in wave_fronts:
+    #                 tau   = sim_time - t0
+    #                 front = shim_wave_speed * tau
+    #                 if 0 < tau < 3 and abs(math.hypot(ag.x-ox,ag.y-oy)-front) < shim_front_tol:
+    #                     # ─ 選択：レア or 通常 ─
+    #                     if random.random() < rare_prob:
+    #                         # --------  レアドロップ  --------
+    #                         ag.drop_mode = "rare"
+    #                         ag.drop_m      = random.uniform(0.45, 1.20)   # 45–120 cm
+    #                         ag.drop_down_s = drop_down_s_n * rare_factor  # 1.2 s
+    #                         ag.drop_up_s   = drop_up_s_n   * rare_factor  # 6.0 s
+    #                         ag.drop_total  = ag.drop_down_s + ag.drop_up_s
+    #                     else:
+    #                         # --------  通常ドロップ  --------
+    #                         ag.drop_mode = "norm"
+    #                         ag.drop_m      = drop_m_norm
+    #                         ag.drop_down_s = drop_down_s_n
+    #                         ag.drop_up_s   = drop_up_s_n
+    #                         ag.drop_total  = drop_total_n
+
+
+    #                     # ここがヒット瞬間 ──────────────────────────
+    #                     atk  = random.uniform(0.003, 0.01)
+    #                     if(ag.drop_mode == "rare"):
+    #                         rel = 8.0
+    #                     else:
+    #                         rel  = random.uniform(0.4,   4.0)
+    #                     fAtk = random.uniform(0.01,  0.5)
+    #                     vibRate = random.uniform(0.1, 10)
+    #                     vibDepth = random.uniform(0.01, 0.5)
+    #                     amp = random.uniform(0.03, 0.08)
+    #                     osc_client.send_message("/shim", [int(ag.node_id), atk, rel, fAtk, vibRate, vibDepth, amp])
+
+    #                     # osc_client.send_message("/shim", [int(ag.node_id)])   # <-- ここに追加
+    #                     # ────────────────────────────────────────────
+
+    #                     z_off       += shim_base_amp_m * 4
+    #                     ag.kick_time = sim_time
+    #                     ag.kick_peak = yaw_peak_deg
+    #                     ag.drop_time = sim_time
+    #                     ag.face_dir  = wdir
+    #                     ag.color_from = ag.current_color
+    #                     ag.color_to   = wcol * 0.5
+    #                     ag.color_t0   = sim_time
+    #                     break   # 1 波で十分
+
+    #         # ─ 回転 ─
+    #         k_age = sim_time - ag.kick_time
+    #         yaw_kick = (0 if k_age < 0 else
+    #                     yaw_peak_deg * k_age/yaw_rise_s if k_age<=yaw_rise_s else
+    #                     yaw_peak_deg * math.exp(-(k_age-yaw_rise_s)/yaw_decay_tau))
+    #         desired_yaw = ag.face_dir + yaw_kick
+    #         dyaw = ((desired_yaw - ag.yaw + 540)%360) - 180
+    #         ag.yaw += dyaw * 0.1
+
+    #         # ─ ドロップ ─
+    #         d_age = sim_time - ag.drop_time
+    #         if d_age < 0:
+    #             drop_off = 0
+    #         elif d_age <= ag.drop_down_s:
+    #             drop_off = -ag.drop_m * (d_age / ag.drop_down_s)
+    #         elif d_age <= ag.drop_total:
+    #             drop_off = -ag.drop_m * (1 - (d_age - ag.drop_down_s)/ag.drop_up_s)
+    #         else:
+    #             drop_off = 0
+
+    #         # ─ 色基本 ─
+    #         if sim_time - ag.color_t0 < color_rise_s:
+    #             t = (sim_time - ag.color_t0)/color_rise_s
+    #             base_col = ag.color_from*(1-t) + ag.color_to*t
+    #         else:
+    #             base_col = ag.color_to
+
+    #         # ─ フラッシュ ─
+    #         f_age = sim_time - ag.drop_time
+    #         if 0 <= f_age <= flash_rise_s + flash_decay_s:
+    #             if f_age <= flash_rise_s:
+    #                 r = f_age/flash_rise_s
+    #             else:
+    #                 r = 1 - (f_age - flash_rise_s)/flash_decay_s
+    #             mix = white_mix_peak*r
+    #             inc = 1 + bright_peak*r
+    #             col = (base_col*(1-mix) + vector(1,1,1)*mix) * inc
+    #             col = vector(min(1,col.x),min(1,col.y),min(1,col.z))
+    #         else:
+    #             col = base_col
+
+    #         ag.current_color = col
+
+    #         # ─ 近接観客 強調 (通常のみ) ─
+    #         if ag.drop_mode == "norm":
+    #             for p in audiences:
+    #                 if math.hypot(p.x-ag.x,p.y-ag.y) < 1:
+    #                     z_off  *= 2
+    #                     break
+
+    #         # ─ 反映 ─
+    #         ag.z   = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
+    #         ag.pitch = 0
+    #         update_geometry(ag)
+    #         for l3,l2,_ in ag.leds:
+    #             l3.color = l2.color = ag.current_color
 
         # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
         for ag in agents:
