@@ -40,6 +40,14 @@ transition_duration = 2.0   # 切り替えを何秒かけるか
 # ========================================================
 paused = False          # 一時停止フラグ
 
+
+# ========================================================
+# マニュアルモード用のグローバル変数
+# ========================================================
+manual_commands = {}  # {target_id: {"z": float, "yaw": float, ...}}
+manual_global = {}    # 空の辞書で初期化（Noneではなく）
+
+
 separationFactor = 0.14
 cohesionFactor   = 1.76
 rotationSpeed    = 0.001
@@ -270,9 +278,22 @@ ui = canvas(
 def on_mode_select(m):
     global is_transitioning, transition_start
     # …既存のモード切り替えロジック（transition_start とか agents.prev_* の保存など）…
+    # マニュアルモードから他のモードに切り替わる場合
+    if mode_menu.selected == "マニュアルモード":
+        clear_manual_commands()
+    
+    # 既存のトランジション処理
+    is_transitioning = True
+    transition_start = sim_time
+    for ag in agents:
+        ag.prev_z = ag.z
+        ag.prev_yaw = ag.yaw
+        ag.prev_pitch = ag.pitch
+        ag.prev_color = ag.current_color
 
 # ② ドロップダウンを 1 回だけ生成し、すぐ隠す
-modes = ["フローモード",
+modes = ["マニュアルモード",
+         "フローモード",
          "天上天下モード",
          "回る天井",
          "鬼さんこちらモード",
@@ -700,7 +721,7 @@ with open("node.csv", newline="") as f:
         agents.append(Agent(i, j,
                             float(row["x"]), float(row["y"]),
                             z,
-                            row["id"],
+                            int(row["id"]),
                             idx=k))
 for ag in agents:
     i, j = ag.i, ag.j
@@ -968,6 +989,164 @@ def send_group_stats(agents, minZ, maxZ):
         osc_client_max.send_message('/groupA_y', avg_y_A)
 
 
+def process_manual_commands():
+    """
+    改良版：MaxMSPからのOSCパラメータを即座に反映
+    """
+    global manual_commands, manual_global  # ← これが重要！
+    
+    # OSCからパラメータを取得
+    target_id = int(params.get("manual_target", 0))
+    z_cmd = params.get("manual_z", None)
+    yaw_cmd = params.get("manual_yaw", None)
+    pitch_cmd = params.get("manual_pitch", None)
+    r_cmd = params.get("manual_r", None)
+    g_cmd = params.get("manual_g", None)
+    b_cmd = params.get("manual_b", None)
+    
+    # 値の変化を検出するための初期化
+    if not hasattr(process_manual_commands, 'last_values'):
+        process_manual_commands.last_values = {}
+        process_manual_commands.last_target = -1
+    
+    # ターゲットが変わったかチェック
+    target_changed = (target_id != process_manual_commands.last_target)
+    if target_changed:
+        print(f"[Manual] Target changed: {process_manual_commands.last_target} → {target_id}")
+        process_manual_commands.last_target = target_id
+    
+    # 現在の値をまとめる
+    current_values = {
+        'z': z_cmd, 'yaw': yaw_cmd, 'pitch': pitch_cmd,
+        'r': r_cmd, 'g': g_cmd, 'b': b_cmd
+    }
+    
+    # 値が変化したかチェック
+    value_changed = False
+    for key, val in current_values.items():
+        if val is not None:
+            last_val = process_manual_commands.last_values.get(f"{target_id}_{key}")
+            if last_val != val:
+                value_changed = True
+                process_manual_commands.last_values[f"{target_id}_{key}"] = val
+    
+    # コマンドオブジェクトを構築
+    command = {}
+    
+    # 位置・姿勢のコマンド
+    if z_cmd is not None:
+        command["z"] = max(minZ, min(maxZ, float(z_cmd)))
+    if yaw_cmd is not None:
+        command["yaw"] = (float(yaw_cmd) % 360.0 + 360.0) % 360.0
+    if pitch_cmd is not None:
+        command["pitch"] = max(-60.0, min(60.0, float(pitch_cmd)))
+    
+    # 色のコマンド
+    if r_cmd is not None:
+        command["r"] = max(0.0, min(1.0, float(r_cmd)))
+    if g_cmd is not None:
+        command["g"] = max(0.0, min(1.0, float(g_cmd)))
+    if b_cmd is not None:
+        command["b"] = max(0.0, min(1.0, float(b_cmd)))
+    
+    # コマンドがある場合のみ処理
+    if command:
+        if target_id == 0:
+            # 全体制御 - グローバル変数を更新
+            manual_global.update(command)  # ← 代入ではなくupdate()を使用
+            if value_changed:
+                print(f"[Manual] Global command: {command}")
+        else:
+            # 個別制御
+            manual_commands[target_id] = command.copy()
+            if value_changed:
+                print(f"[Manual] ID {target_id} command: {command}")
+                # デバッグ：コマンドが設定されたことを確認
+                print(f"[Manual] manual_commands now contains: {list(manual_commands.keys())}")
+
+
+def apply_manual_mode():
+    """
+    マニュアルモードでの各エージェントの制御（デバッグ強化版）
+    """
+    global manual_commands, manual_global
+    
+    target_id = int(params.get("manual_target", 0))
+    
+    # 一度だけデバッグ情報を表示
+    if not hasattr(apply_manual_mode, 'debug_done'):
+        print(f"\n[Debug] Total agents: {len(agents)}")
+        print(f"[Debug] Agent node_ids: {[ag.node_id for ag in agents[:10]]}...")
+        print(f"[Debug] Current target_id: {target_id}")
+        print(f"[Debug] manual_commands keys: {list(manual_commands.keys())}")
+        apply_manual_mode.debug_done = True
+    
+    # 適用されたエージェントの数をカウント
+    applied_count = 0
+    
+    for ag in agents:
+        cmd = None
+        
+        # 制御コマンドの選択
+        if target_id == 0:
+            # 全体制御モード
+            if manual_global:
+                cmd = manual_global
+        else:
+            # 個別制御モード
+            if ag.node_id == target_id and target_id in manual_commands:
+                cmd = manual_commands[target_id]
+                applied_count += 1
+                # 初回適用時のみデバッグ出力
+                if not hasattr(ag, '_manual_debug_printed'):
+                    print(f"[Manual] Found matching agent: node_id={ag.node_id}, applying command: {cmd}")
+                    ag._manual_debug_printed = True
+        
+        if cmd:
+            # 位置・姿勢の更新（スムーズなイージング）
+            ease_factor = 0.1
+            
+            if "z" in cmd:
+                ag.z += (cmd["z"] - ag.z) * ease_factor
+            
+            if "yaw" in cmd:
+                dyaw = ((cmd["yaw"] - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * ease_factor
+            
+            if "pitch" in cmd:
+                ag.pitch += (cmd["pitch"] - ag.pitch) * ease_factor
+            
+            # 色の更新
+            if "r" in cmd and "g" in cmd and "b" in cmd:
+                target_color = vector(cmd["r"], cmd["g"], cmd["b"])
+                ag.current_color += (target_color - ag.current_color) * ease_factor
+            
+            # ジオメトリの更新
+            ax = ag.compute_axis() * agent_length
+            ctr = vector(ag.x, ag.y, ag.z)
+            ag.body.pos = ctr - ax/2
+            ag.body.axis = ax
+            ag.cable.pos = ctr
+            ag.cable.axis = vector(0, 0, maxZ - ag.z)
+            
+            # LEDの更新
+            u = ax.norm()
+            for ld3, ld2, off in ag.leds:
+                ld3.pos = ctr + u * (agent_length * off)
+                ld2.pos = vector(ag.x + u.x * (agent_length * off),
+                               ag.y + u.y * (agent_length * off), 0)
+                ld3.color = ld2.color = ag.current_color
+            
+            # 本体の色も更新
+            ag.body.color = ag.current_color
+            
+            # MQTT送信キューに追加
+            send_queue.put(ag)
+    
+    # デバッグ：個別制御時に適用されたエージェント数を表示
+    if target_id > 0 and applied_count == 0 and random.random() < 0.05:  # 5%の確率で
+        print(f"[Warning] No agent found with node_id={target_id}")
+        print(f"[Warning] Available node_ids: {sorted([ag.node_id for ag in agents])}")
 # ========================================================
 # メインループ
 # ========================================================
@@ -1032,7 +1211,12 @@ while True:
     fish_coh_factor   = params["fish_coh"]
     fin_osc_amp_deg   = params["fin_amp"]
     fin_osc_freq_hz   = params["fin_freq"]
-
+    # デバッグ用：マニュアルモードのパラメータを確認（オプション）
+    if mode_menu.selected == "マニュアルモード" and random.random() < 0.01:  # 1%の確率で
+        manual_target = int(params.get("manual_target", 0))
+        manual_z = params.get("manual_z", None)
+        print(f"[Debug] Manual params: target={manual_target}, z={manual_z}")
+    
 
     # 必ず整数化
     try:
@@ -1185,10 +1369,12 @@ while True:
             # ─── 7) 色更新（従来通り）────────────────────────
             global_hue   = (sim_time * color_speed) % 1.0
             height_ratio = (ag.z - minZp) / (maxZp - minZp)
-            if ag.node_id == "1":                 # ← 文字列比較
+            # if ag.node_id == "1":                 # ← 文字列比較
+            if ag.node_id == 1:        
                 osc_client_max.send_message('/id1/z',       ag.z)          # 実座標
                 # osc_client_max.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
-            if ag.node_id == "46":                 # ← 文字列比較
+            # if ag.node_id == "46":                 # ← 文字列比較
+            if ag.node_id == 46:
                 osc_client_max.send_message('/id46/z',       ag.z)          # 実座標
                 # osc_client_max.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
             hue        = (global_hue + height_ratio * 0.125) % 1.0
@@ -1867,224 +2053,6 @@ while True:
             # すべて消費済みなら、この波は破棄される
 
         wave_events = new_wave_events
-    # # ------------------------------------------------------------
-    # elif mode_menu.selected == "蜂シマーモード":
-    # # ------------------------------------------------------------
-    #     # 基本
-    #     shim_base_freq_hz = 1.0
-    #     shim_base_amp_m   = 0.005
-    #     shim_wave_speed   = 1.2
-    #     shim_trigger_mean = 6.0
-    #     shim_front_tol    = 0.35
-
-    #     # 水平回転
-    #     yaw_peak_deg  = 90.0
-    #     yaw_rise_s    = 0.5
-    #     yaw_decay_tau = 0.8
-
-    #     # ドロップ通常
-    #     drop_m_norm   = 0.15
-    #     drop_down_s_n = 0.2
-    #     drop_up_s_n   = 1.0
-    #     drop_total_n  = drop_down_s_n + drop_up_s_n
-
-    #     # レアドロップ (0.5 %)
-    #     rare_prob     = 0.002
-    #     rare_factor   = 6
-    #     drop_m_rare   = drop_m_norm * rare_factor          # 0.9 m
-    #     drop_down_s_r = drop_down_s_n * rare_factor        # 1.2 s
-    #     drop_up_s_r   = drop_up_s_n   * rare_factor        # 6 s
-    #     drop_total_r  = drop_down_s_r + drop_up_s_r
-
-    #     # 色 & フラッシュ
-    #     color_rise_s   = 0.5
-    #     flash_rise_s   = 0.2
-    #     flash_decay_s  = 1.5
-    #     white_mix_peak = 0.5
-    #     bright_peak    = 0.5
-
-    #     # 0) 波トリガ（震源→中心 方角を保存）
-    #     # if sim_time >= next_shim_time:
-    #     #     hue = random.random()
-    #     #     r,g,b = colorsys.hsv_to_rgb(hue, 1, 1)
-    #     #     wave_col = vector(r,g,b)
-    #     #     ori = random.choice(agents)
-    #     #     wdir = math.degrees(math.atan2(centerY-ori.y, centerX-ori.x))
-    #     #     wave_fronts.append((ori.x, ori.y, sim_time, wave_col, wdir))
-    #     #     next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
-    #     # 0) 波トリガ（震源→中心 方角を保存 かつ、各エージェントの t_trigger を事前計算して wave_events に入れる）
-    #     if sim_time >= next_shim_time:
-    #         # --- 1) 波の色と震源エージェントを決定 ---
-    #         hue = random.random()
-    #         r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
-    #         wave_col = vector(r, g, b)
-
-    #         ori = random.choice(agents)
-    #         # “波の進行方向”として震源からセンターを見る角度を使う
-    #         wdir = math.degrees(math.atan2(centerY - ori.y, centerX - ori.x))
-
-    #         # --- 2) 各エージェントについてトリガー時刻を計算 ---
-    #         events = []  # この波に関する 全ノードの(t_trigger, agent, wave_color, wave_dir) を入れる
-    #         for ag in agents:
-    #             # 震源(ori.x, ori.y) から ag までの距離
-    #             dist = math.hypot(ag.x - ori.x, ag.y - ori.y)
-
-    #             # 正確な到達時刻 = 現在時刻 + (距離 ÷ 波速)
-    #             t_trigger = sim_time + dist / shim_wave_speed
-
-    #             # ...同一の半径距離にあるノード同士が完全同時に鳴らないよう、
-    #             #    小さなジッタ(乱数)を加えることもできる（例：0.0～0.05秒の間でランダム）
-    #             jitter = random.uniform(0.0, 0.05)  # お好みで調整
-    #             t_trigger += jitter
-
-    #             # “この波でこのエージェントをトリガーするときに必要な情報”をまとめておく
-    #             events.append((t_trigger, ag, wave_col, wdir))
-
-    #         # --- 3) トリガーイベントを時刻順でソートして wave_events に追加 ---
-    #         events.sort(key=lambda x: x[0])
-    #         wave_events.append({
-    #             'origin': (ori.x, ori.y),
-    #             'events': events,
-    #             't0': sim_time,
-    #         })
-
-    #         # 次の波をいつ発生させるか
-    #         next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
-
-    #     # 1) エージェント更新
-    #     for ag in agents:
-    #         z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7) * shim_base_amp_m
-
-    #         # 初期化
-    #         if not hasattr(ag,"yaw0"):
-    #             ag.yaw0 = ag.yaw
-    #             ag.z0   = ag.z
-    #             ag.face_dir = ag.yaw0
-    #             ag.kick_time = ag.drop_time = ag.color_t0 = -999.0
-    #             ag.kick_peak = 0.0
-    #             ag.drop_mode = "norm"          # "norm" or "rare"
-    #             ag.current_color = vector(0.5,0.5,0.0)
-    #             ag.color_from = ag.color_to = ag.current_color
-    #             #  ▼▼ ここを追加 ▼▼
-    #             ag.drop_mode  = "norm"
-    #             ag.drop_down_s = drop_down_s_n
-    #             ag.drop_up_s   = drop_up_s_n
-    #             ag.drop_total  = drop_total_n
-    #             ag.drop_m      = drop_m_norm
-    #             #  ▲▲ ここまで ▲▲
-
-
-    #         # レアドロップが完了するまで波を無視
-    #         if ag.drop_mode == "rare" and sim_time - ag.drop_time < drop_total_r:
-    #             wave_hit_allowed = False
-    #         else:
-    #             wave_hit_allowed = True
-    #             ag.drop_mode = "norm"          # レア終了後リセット
-
-    #         # 波ヒット判定
-    #         if wave_hit_allowed:
-    #             for ox,oy,t0,wcol,wdir in wave_fronts:
-    #                 tau   = sim_time - t0
-    #                 front = shim_wave_speed * tau
-    #                 if 0 < tau < 3 and abs(math.hypot(ag.x-ox,ag.y-oy)-front) < shim_front_tol:
-    #                     # ─ 選択：レア or 通常 ─
-    #                     if random.random() < rare_prob:
-    #                         # --------  レアドロップ  --------
-    #                         ag.drop_mode = "rare"
-    #                         ag.drop_m      = random.uniform(0.45, 1.20)   # 45–120 cm
-    #                         ag.drop_down_s = drop_down_s_n * rare_factor  # 1.2 s
-    #                         ag.drop_up_s   = drop_up_s_n   * rare_factor  # 6.0 s
-    #                         ag.drop_total  = ag.drop_down_s + ag.drop_up_s
-    #                     else:
-    #                         # --------  通常ドロップ  --------
-    #                         ag.drop_mode = "norm"
-    #                         ag.drop_m      = drop_m_norm
-    #                         ag.drop_down_s = drop_down_s_n
-    #                         ag.drop_up_s   = drop_up_s_n
-    #                         ag.drop_total  = drop_total_n
-
-
-    #                     # ここがヒット瞬間 ──────────────────────────
-    #                     atk  = random.uniform(0.003, 0.01)
-    #                     if(ag.drop_mode == "rare"):
-    #                         rel = 8.0
-    #                     else:
-    #                         rel  = random.uniform(0.4,   4.0)
-    #                     fAtk = random.uniform(0.01,  0.5)
-    #                     vibRate = random.uniform(0.1, 10)
-    #                     vibDepth = random.uniform(0.01, 0.5)
-    #                     amp = random.uniform(0.03, 0.08)
-    #                     osc_client.send_message("/shim", [int(ag.node_id), atk, rel, fAtk, vibRate, vibDepth, amp])
-
-    #                     # osc_client.send_message("/shim", [int(ag.node_id)])   # <-- ここに追加
-    #                     # ────────────────────────────────────────────
-
-    #                     z_off       += shim_base_amp_m * 4
-    #                     ag.kick_time = sim_time
-    #                     ag.kick_peak = yaw_peak_deg
-    #                     ag.drop_time = sim_time
-    #                     ag.face_dir  = wdir
-    #                     ag.color_from = ag.current_color
-    #                     ag.color_to   = wcol * 0.5
-    #                     ag.color_t0   = sim_time
-    #                     break   # 1 波で十分
-
-    #         # ─ 回転 ─
-    #         k_age = sim_time - ag.kick_time
-    #         yaw_kick = (0 if k_age < 0 else
-    #                     yaw_peak_deg * k_age/yaw_rise_s if k_age<=yaw_rise_s else
-    #                     yaw_peak_deg * math.exp(-(k_age-yaw_rise_s)/yaw_decay_tau))
-    #         desired_yaw = ag.face_dir + yaw_kick
-    #         dyaw = ((desired_yaw - ag.yaw + 540)%360) - 180
-    #         ag.yaw += dyaw * 0.1
-
-    #         # ─ ドロップ ─
-    #         d_age = sim_time - ag.drop_time
-    #         if d_age < 0:
-    #             drop_off = 0
-    #         elif d_age <= ag.drop_down_s:
-    #             drop_off = -ag.drop_m * (d_age / ag.drop_down_s)
-    #         elif d_age <= ag.drop_total:
-    #             drop_off = -ag.drop_m * (1 - (d_age - ag.drop_down_s)/ag.drop_up_s)
-    #         else:
-    #             drop_off = 0
-
-    #         # ─ 色基本 ─
-    #         if sim_time - ag.color_t0 < color_rise_s:
-    #             t = (sim_time - ag.color_t0)/color_rise_s
-    #             base_col = ag.color_from*(1-t) + ag.color_to*t
-    #         else:
-    #             base_col = ag.color_to
-
-    #         # ─ フラッシュ ─
-    #         f_age = sim_time - ag.drop_time
-    #         if 0 <= f_age <= flash_rise_s + flash_decay_s:
-    #             if f_age <= flash_rise_s:
-    #                 r = f_age/flash_rise_s
-    #             else:
-    #                 r = 1 - (f_age - flash_rise_s)/flash_decay_s
-    #             mix = white_mix_peak*r
-    #             inc = 1 + bright_peak*r
-    #             col = (base_col*(1-mix) + vector(1,1,1)*mix) * inc
-    #             col = vector(min(1,col.x),min(1,col.y),min(1,col.z))
-    #         else:
-    #             col = base_col
-
-    #         ag.current_color = col
-
-    #         # ─ 近接観客 強調 (通常のみ) ─
-    #         if ag.drop_mode == "norm":
-    #             for p in audiences:
-    #                 if math.hypot(p.x-ag.x,p.y-ag.y) < 1:
-    #                     z_off  *= 2
-    #                     break
-
-    #         # ─ 反映 ─
-    #         ag.z   = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
-    #         ag.pitch = 0
-    #         update_geometry(ag)
-    #         for l3,l2,_ in ag.leds:
-    #             l3.color = l2.color = ag.current_color
 
         # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
         for ag in agents:
@@ -2110,7 +2078,22 @@ while True:
                           if sim_time - t < 8]
     # ------------------------------------------------------------
     
+    # メインループの既存のelif文の後に追加：
+    elif mode_menu.selected == "マニュアルモード":
+        # マニュアルモードの処理
+        process_manual_commands()
+        apply_manual_mode()
+        
+        # トリガーリセット（オプション）
+        if params["manual_send"] >= 1.0:
+            reset_manual_trigger()  # 次回の誤作動を防ぐ
+        
+        # 表示更新
+        for ag in agents:
+            ag.display()
+            send_queue.put(ag)
 
+    # 音に対するインタラクティブモード
     apply_sound_reaction()     # ★追加★
 
     # 3Dカメラ軌道更新
