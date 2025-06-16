@@ -304,7 +304,6 @@ def clear_manual_commands():
 
 # ② ドロップダウンを 1 回だけ生成し、すぐ隠す
 modes = ["マニュアルモード",
-         "フローモード",
          "天上天下モード",
          "回る天井",
          "鬼さんこちらモード",
@@ -374,6 +373,22 @@ class Agent:
 
         self.drop_time  = float('-inf')   # ← 追加：これで常に存在
         self.drop_total = 0.0
+
+        # ダウンライトの明るさ変数を追加
+        self.downlight_brightness = 0.0  # 0.0-1.0の範囲
+        self.target_downlight = 0.0      # イージング用の目標値
+
+        # 2Dビューにダウンライト表示用の円を追加
+        # LEDよりも下のレイヤー（z=-0.2）に配置
+        self.downlight_2d = cylinder(
+            canvas=scene2d,
+            pos=vector(self.x, self.y, -0.2),  # LEDより下
+            axis=vector(0, 0, 0.01),  # 薄い円柱
+            radius=agent_radius * 3,   # エージェントより大きめの円
+            color=vector(1, 1, 0.8),   # 暖色系の光
+            opacity=0.0,               # 初期は透明
+            emissive=True              # 発光
+        )
 
         # 3D body + cable
         ax  = self.compute_axis() * agent_length
@@ -807,6 +822,24 @@ def handle_audience(coords_list: list[tuple[float, float]]):
 
 
 
+# 2. ダウンライト表示を更新する関数：
+def update_downlight_display(agent):
+    """
+    ダウンライトの明るさを2Dビューに可視化
+    """
+    # 明るさに応じて不透明度を設定（0-1の範囲）
+    opacity = agent.downlight_brightness * 0.8  # 最大でも80%の不透明度
+    
+    # 2D表示の更新
+    agent.downlight_2d.opacity = opacity
+    
+    # 明るさに応じて色も少し変化（暗い時は赤っぽく、明るい時は白っぽく）
+    agent.downlight_2d.color = vector(
+        1.0,
+        0.8 + 0.2 * agent.downlight_brightness,
+        0.6 + 0.4 * agent.downlight_brightness
+    )
+
 
 def handle_sound_source(coords):
     x, y = coords
@@ -928,8 +961,11 @@ def send_robot_data(agent):
     g = int(agent.current_color.y * 255)
     b = int(agent.current_color.z * 255)
     mqtt_client.publish(f"cl/{agent.node_id}", bytes([r, g, b]))
-    mqtt_client.publish(f"dl/{agent.node_id}", bytes([int(round((r+g+b)/3))]))
+    # mqtt_client.publish(f"dl/{agent.node_id}", bytes([int(round((r+g+b)/3))]))
 
+    # ─ ④ ダウンライト送信（新規追加）────────────────
+    dl = int(agent.downlight_brightness * 255)
+    mqtt_client.publish(f"dl/{agent.node_id}", bytes([dl]))
 
     # ---- OSC 出力 ----
     # SuperCollider の OSCFunc('/robot') に合わせて、
@@ -1016,6 +1052,7 @@ def process_manual_commands():
     r_cmd = params.get("manual_r", None)
     g_cmd = params.get("manual_g", None)
     b_cmd = params.get("manual_b", None)
+    dl_cmd = params.get("manual_dl", None)  # ← 追加
     
     # 値の変化を検出するための初期化
     if not hasattr(process_manual_commands, 'last_values'):
@@ -1031,7 +1068,8 @@ def process_manual_commands():
     # 現在の値をまとめる
     current_values = {
         'z': z_cmd, 'yaw': yaw_cmd, 'pitch': pitch_cmd,
-        'r': r_cmd, 'g': g_cmd, 'b': b_cmd
+        'r': r_cmd, 'g': g_cmd, 'b': b_cmd,
+        'dl': dl_cmd  # ← 追加
     }
     
     # 値が変化したかチェック
@@ -1061,7 +1099,9 @@ def process_manual_commands():
         command["g"] = max(0.0, min(1.0, float(g_cmd)))
     if b_cmd is not None:
         command["b"] = max(0.0, min(1.0, float(b_cmd)))
-    
+    if dl_cmd is not None:
+        command["dl"] = max(0.0, min(1.0, float(dl_cmd)))
+
     # コマンドがある場合のみ処理
     if command:
         if target_id == 0:
@@ -1133,6 +1173,11 @@ def apply_manual_mode():
             if "r" in cmd and "g" in cmd and "b" in cmd:
                 target_color = vector(cmd["r"], cmd["g"], cmd["b"])
                 ag.current_color += (target_color - ag.current_color) * ease_factor
+            
+            # ダウンライトの更新（追加）
+            if "dl" in cmd:
+                ag.target_downlight = cmd["dl"]
+                ag.downlight_brightness += (ag.target_downlight - ag.downlight_brightness) * ease_factor
             
             # ジオメトリの更新
             ax = ag.compute_axis() * agent_length
@@ -2011,7 +2056,7 @@ while True:
         shim_base_freq_hz = 1.0
         shim_base_amp_m   = 0.005
         shim_wave_speed   = 1.2
-        shim_trigger_mean = 6.0
+        shim_trigger_mean = 3.0
         shim_front_tol    = 0.35    # このパラメータは使わなくなるかもしれません
 
         yaw_peak_deg  = 90.0
@@ -2305,7 +2350,7 @@ while True:
                     distance = math.hypot(ag.x - wave['origin'][0], ag.y - wave['origin'][1])
                     
                     # 震源ノードのIDを送信
-                    osc_client_sc.send_message(
+                    osc_client_max.send_message(
                         "/shim",
                         [int(wave['origin_id']), atk, rel, fAtk, vibRate, vibDepth, amp, distance]
                     )
@@ -2374,6 +2419,7 @@ while True:
         # 表示更新
         for ag in agents:
             ag.display()
+            update_downlight_display(ag)  # ← ダウンライト表示を更新
             send_queue.put(ag)
 
     # 音に対するインタラクティブモード
