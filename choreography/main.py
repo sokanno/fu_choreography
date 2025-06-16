@@ -291,6 +291,17 @@ def on_mode_select(m):
         ag.prev_pitch = ag.pitch
         ag.prev_color = ag.current_color
 
+def clear_manual_commands():
+    """
+    マニュアルモードから他のモードに切り替わる際に
+    手動制御のコマンドをすべてクリアする
+    """
+    global manual_commands, manual_global
+    manual_commands.clear()
+    manual_global.clear()
+    print("[Manual] Commands cleared due to mode change")
+
+
 # ② ドロップダウンを 1 回だけ生成し、すぐ隠す
 modes = ["マニュアルモード",
          "フローモード",
@@ -2356,9 +2367,9 @@ while True:
         process_manual_commands()
         apply_manual_mode()
         
-        # トリガーリセット（オプション）
-        if params["manual_send"] >= 1.0:
-            reset_manual_trigger()  # 次回の誤作動を防ぐ
+        # # トリガーリセット（オプション）
+        # if params["manual_send"] >= 1.0:
+        #     reset_manual_trigger()  # 次回の誤作動を防ぐ
         
         # 表示更新
         for ag in agents:
