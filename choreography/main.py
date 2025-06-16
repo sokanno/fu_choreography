@@ -562,6 +562,8 @@ class Agent:
                 0
             )
 
+
+
     def set_leds_tenge(self, t, dt):
         # 1) グループで色相を決定
         base_h = (t * color_speed) % 1.0
@@ -1469,52 +1471,206 @@ while True:
             
 
 
+    # elif mode_menu.selected == "天上天下モード":
+    #     # ─────────────────────────────────────────────
+    #     # 1) Group-A の切り替え判定
+    #     # ─────────────────────────────────────────────
+    #     za = agents[current_groupA_idx].z
+    #     zb = sum(a.z for i, a in enumerate(agents) if i != current_groupA_idx) / (len(agents)-1)
+    #     z_diff = za - zb
+
+    #     if prev_z_diff is not None and abs(z_diff) < epsilon:
+    #         # 平衡状態なら別のエージェントをリーダーに
+    #         choices = list(range(len(agents)))
+    #         choices.remove(current_groupA_idx)
+    #         current_groupA_idx = random.choice(choices)
+    #         osc_client_max.send_message('/trig', 0)   
+    #     prev_z_diff = z_diff
+
+    #     # ─────────────────────────────────────────────
+    #     # 2) グループ属性と色の決定（変更検知あり）
+    #     # ─────────────────────────────────────────────
+    #     group_changed = False
+    #     for idx, ag in enumerate(agents):
+    #         new_group = "A" if idx == current_groupA_idx else "B"
+    #         if new_group != getattr(ag, "group", None):
+    #             # スナップショットを取ってトランジション準備
+    #             ag.prev_color  = getattr(ag, "current_color", vector(1, 1, 1))
+    #             ag.prev_z      = ag.z
+    #             ag.prev_yaw    = ag.yaw
+    #             ag.prev_pitch  = ag.pitch
+    #             ag.current_color = vector(1.0, 0.3, 0.3) if new_group == "A" else vector(0.25, 0.6, 1.0)
+    #             ag.group = new_group
+    #             group_changed = True
+
+    #     if group_changed:
+    #         is_transitioning   = True
+    #         transition_start   = sim_time
+    #         transition_duration= 1.0     # フェード時間 [s]
+
+    #     # ─────────────────────────────────────────────
+    #     # 3) 上下運動だけ更新
+    #     # ─────────────────────────────────────────────
+    #     for ag in agents:
+    #         ag.update_tenge(sim_time, dt)      # ← ここで ag.z が更新される
+
+    #     # ─────────────────────────────────────────────
+    #     # 4) 向きとジオメトリ
+    #     # ─────────────────────────────────────────────
+    #     for ag in agents:
+    #         # A) Group-B はリーダー (A) を向く
+    #         if ag.group == "B":
+    #             lead = agents[current_groupA_idx]
+    #             dx, dy = lead.x - ag.x, lead.y - ag.y
+    #             dz     = lead.z - ag.z
+    #             base_yaw   = math.degrees(math.atan2(dy, dx))
+    #             base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+    #         else:
+    #             base_yaw, base_pitch = ag.yaw, ag.pitch  # Group-A は向きを維持
+
+    #         # B) 近くに観客がいればそちらを優先
+    #         closest, md = None, detect_radius
+    #         for p in audiences:
+    #             d = math.hypot(p.x - ag.x, p.y - ag.y)
+    #             if d < md:
+    #                 md, closest = d, p
+    #         if closest:
+    #             dx2, dy2 = closest.x - ag.x, closest.y - ag.y
+    #             dz2      = closest.height - ag.z
+    #             tgt_yaw   = math.degrees(math.atan2(dy2, dx2))
+    #             tgt_pitch = math.degrees(math.atan2(dz2, math.hypot(dx2, dy2)))
+    #         else:
+    #             tgt_yaw, tgt_pitch = base_yaw, base_pitch
+
+    #         # C) イージング
+    #         k = min(1.0, ease_speed * dt)
+    #         dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+    #         ag.yaw   += dyaw * k
+    #         ag.pitch += (tgt_pitch - ag.pitch) * k
+
+    #         # D) ジオメトリ
+    #         axis = ag.compute_axis() * agent_length
+    #         ctr  = vector(ag.x, ag.y, ag.z)
+    #         ag.body.pos  = ctr - axis/2
+    #         ag.body.axis = axis
+    #         ag.cable.pos = ctr
+    #         ag.cable.axis = vector(0, 0, maxZ - ag.z)
+    #         # 天上天下モードのメインループ内、位置を更新し終えた直後で呼び出す
+    #         send_group_stats(agents, minZ, maxZ)  
+
+    #     # ─────────────────────────────────────────────
+    #     # 5) 色フェード or 通常 LED
+    #     # ─────────────────────────────────────────────
+    #     if is_transitioning:
+    #         p = min(1.0, (sim_time - transition_start) / transition_duration)
+    #         for ag in agents:
+    #             col = ag.prev_color * (1 - p) + ag.current_color * p
+    #             ag.body.color = col
+    #             for ld3, ld2, _ in ag.leds:
+    #                 ld3.color = ld2.color = col
+    #         if p >= 1.0:
+    #             is_transitioning = False
+    #     else:
+    #         for ag in agents:
+    #             ag.set_leds_tenge(sim_time, dt)   # 時間・高さ依存の発光
+
+    #     # ─────────────────────────────────────────────
+    #     # 6) 描画 & MQTT 送信
+    #     # ─────────────────────────────────────────────
+    #     for ag in agents:
+    #         ag.display()
+    #         send_queue.put(ag)
+
+
     elif mode_menu.selected == "天上天下モード":
         # ─────────────────────────────────────────────
-        # 1) Group-A の切り替え判定
+        # 初期化
         # ─────────────────────────────────────────────
-        za = agents[current_groupA_idx].z
-        zb = sum(a.z for i, a in enumerate(agents) if i != current_groupA_idx) / (len(agents)-1)
-        z_diff = za - zb
+        if not hasattr(agents[0], 'tenge_phase'):
+            for ag in agents:
+                ag.tenge_phase = 0.0  # 各エージェントの位相
+                
+        if not hasattr(mode_menu, 'tenge_amplitude'):
+            mode_menu.tenge_amplitude = 0.35  # 初期振幅
+            mode_menu.tenge_speed = 1.0  # ラジアン/秒
+            
+        # 高さの範囲を2.0m〜2.7mに設定
+        min_height = 2.0
+        max_height = 2.7
+        center_z = 2.35  # 中間点（すれ違いポイント）
 
-        if prev_z_diff is not None and abs(z_diff) < epsilon:
-            # 平衡状態なら別のエージェントをリーダーに
+        # ─────────────────────────────────────────────
+        # 1) 位相を進める（全員同じ速度で）
+        # ─────────────────────────────────────────────
+        for ag in agents:
+            ag.tenge_phase += mode_menu.tenge_speed * dt
+            
+        # ─────────────────────────────────────────────
+        # 2) 高さを計算
+        # ─────────────────────────────────────────────
+        # Group Aの代表の位相と高さ
+        phase_a = agents[current_groupA_idx].tenge_phase
+        z_a = center_z + mode_menu.tenge_amplitude * math.cos(phase_a)
+        
+        # Group Bの高さ（逆位相）
+        z_b = center_z - mode_menu.tenge_amplitude * math.cos(phase_a)
+        
+        # ─────────────────────────────────────────────
+        # 3) すれ違い検出（中央を通過する瞬間）
+        # ─────────────────────────────────────────────
+        # cos(phase) = 0 となる瞬間を検出
+        # phase = π/2 + nπ の時
+        phase_mod = phase_a % (2 * math.pi)
+        crossing = False
+        
+        # π/2付近または3π/2付近
+        if (1.4 < phase_mod < 1.7) or (4.6 < phase_mod < 4.8):
+            if not hasattr(mode_menu, 'last_crossing_phase') or abs(phase_a - mode_menu.last_crossing_phase) > 1.0:
+                crossing = True
+                mode_menu.last_crossing_phase = phase_a
+        
+        if crossing:
+            # 新しいGroup Aを選択
             choices = list(range(len(agents)))
             choices.remove(current_groupA_idx)
             current_groupA_idx = random.choice(choices)
             osc_client_max.send_message('/trig', 0)
-        prev_z_diff = z_diff
+            
+            # 新しいパラメータ
+            # 振幅: 0.1〜0.35 (最小0.1m、最大0.35mの振幅)
+            mode_menu.tenge_amplitude = random.uniform(0.1, 0.35)
+            mode_menu.tenge_speed = random.uniform(0.8, 1.8)  # ラジアン/秒
+            
+            print(f"すれ違い! 新Group A: {current_groupA_idx}")
 
         # ─────────────────────────────────────────────
-        # 2) グループ属性と色の決定（変更検知あり）
+        # 4) 各エージェントに高さを設定
         # ─────────────────────────────────────────────
-        group_changed = False
         for idx, ag in enumerate(agents):
-            new_group = "A" if idx == current_groupA_idx else "B"
+            if idx == current_groupA_idx:
+                ag.z = z_a
+                new_group = "A"
+            else:
+                ag.z = z_b
+                new_group = "B"
+                
+            # グループ変更の処理
             if new_group != getattr(ag, "group", None):
-                # スナップショットを取ってトランジション準備
-                ag.prev_color  = getattr(ag, "current_color", vector(1, 1, 1))
-                ag.prev_z      = ag.z
-                ag.prev_yaw    = ag.yaw
-                ag.prev_pitch  = ag.pitch
+                ag.prev_color = getattr(ag, "current_color", vector(1, 1, 1))
                 ag.current_color = vector(1.0, 0.3, 0.3) if new_group == "A" else vector(0.25, 0.6, 1.0)
                 ag.group = new_group
-                group_changed = True
-
-        if group_changed:
-            is_transitioning   = True
-            transition_start   = sim_time
-            transition_duration= 1.0     # フェード時間 [s]
 
         # ─────────────────────────────────────────────
-        # 3) 上下運動だけ更新
+        # 5) 以下は元のコードと同じ
         # ─────────────────────────────────────────────
-        for ag in agents:
-            ag.update_tenge(sim_time, dt)      # ← ここで ag.z が更新される
+        
+        # Group Aの切り替え判定用（互換性のため）
+        za = z_a
+        zb = z_b
+        z_diff = za - zb
+        prev_z_diff = z_diff
 
-        # ─────────────────────────────────────────────
-        # 4) 向きとジオメトリ
-        # ─────────────────────────────────────────────
+        # 向きとジオメトリ
         for ag in agents:
             # A) Group-B はリーダー (A) を向く
             if ag.group == "B":
@@ -1524,7 +1680,7 @@ while True:
                 base_yaw   = math.degrees(math.atan2(dy, dx))
                 base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
             else:
-                base_yaw, base_pitch = ag.yaw, ag.pitch  # Group-A は向きを維持
+                base_yaw, base_pitch = ag.yaw, ag.pitch
 
             # B) 近くに観客がいればそちらを優先
             closest, md = None, detect_radius
@@ -1553,32 +1709,27 @@ while True:
             ag.body.axis = axis
             ag.cable.pos = ctr
             ag.cable.axis = vector(0, 0, maxZ - ag.z)
-            # 天上天下モードのメインループ内、位置を更新し終えた直後で呼び出す
-            send_group_stats(agents, minZ, maxZ)  
+            
+            # LEDを筒と一緒に動かす
+            u = axis.norm()
+            for ld3, ld2, offset in ag.leds:
+                ld3.pos = ctr + u * (agent_length * offset)
+                ld2.pos = vector(
+                    ag.x + u.x * (agent_length * offset),
+                    ag.y + u.y * (agent_length * offset),
+                    0
+                )
+            
+        send_group_stats(agents, minZ, maxZ)  
 
-        # ─────────────────────────────────────────────
-        # 5) 色フェード or 通常 LED
-        # ─────────────────────────────────────────────
-        if is_transitioning:
-            p = min(1.0, (sim_time - transition_start) / transition_duration)
-            for ag in agents:
-                col = ag.prev_color * (1 - p) + ag.current_color * p
-                ag.body.color = col
-                for ld3, ld2, _ in ag.leds:
-                    ld3.color = ld2.color = col
-            if p >= 1.0:
-                is_transitioning = False
-        else:
-            for ag in agents:
-                ag.set_leds_tenge(sim_time, dt)   # 時間・高さ依存の発光
+        # 色フェード
+        for ag in agents:
+            ag.set_leds_tenge(sim_time, dt)
 
-        # ─────────────────────────────────────────────
-        # 6) 描画 & MQTT 送信
-        # ─────────────────────────────────────────────
+        # 描画 & MQTT 送信
         for ag in agents:
             ag.display()
             send_queue.put(ag)
-
 
     elif mode_menu.selected == "鬼さんこちらモード":
         # 1) 混雑チェック
@@ -1874,7 +2025,44 @@ while True:
         white_mix_peak = 0.5
         bright_peak    = 0.5
 
-        # --- 2) 波発生（t0 を基準に各ノードの t_trigger を計算して wave_events に格納） ---
+        # # --- 2) 波発生（t0 を基準に各ノードの t_trigger を計算して wave_events に格納） ---
+        # if sim_time >= next_shim_time:
+        #     # 波の色・震源ノード・進行方向を決定
+        #     hue = random.random()
+        #     r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
+        #     wave_col = vector(r, g, b)
+
+        #     ori = random.choice(agents)
+        #     wdir = math.degrees(math.atan2(centerY - ori.y, centerX - ori.x))
+
+        #     # 各ノードについて“トリガー時刻”を計算してリストに入れる
+        #     events = []
+        #     for ag in agents:
+        #         # 震源→エージェント間の距離
+        #         dist = math.hypot(ag.x - ori.x, ag.y - ori.y)
+
+        #         # 正確な到達時刻
+        #         t_trigger = sim_time + dist / shim_wave_speed
+
+        #         # 同一距離上のノードが完全同時に鳴らないように小さな乱数を足す
+        #         jitter = random.uniform(0.0, 0.05)
+        #         t_trigger += jitter
+
+        #         # 各イベントには「t_trigger / 該当エージェント / wave_color / wave_dir」をまとめておく
+        #         events.append((t_trigger, ag, wave_col, wdir))
+
+        #     # 時刻順にソートしてから wave_events にプッシュ
+        #     events.sort(key=lambda x: x[0])
+        #     wave_events.append({
+        #         'origin': (ori.x, ori.y),
+        #         't0': sim_time,
+        #         'events': events
+        #     })
+
+        #     # 次の波を発生させるタイミングを決定
+        #     next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
+
+        # --- 2) 波発生の部分も修正 ---
         if sim_time >= next_shim_time:
             # 波の色・震源ノード・進行方向を決定
             hue = random.random()
@@ -1884,18 +2072,31 @@ while True:
             ori = random.choice(agents)
             wdir = math.degrees(math.atan2(centerY - ori.y, centerX - ori.x))
 
-            # 各ノードについて“トリガー時刻”を計算してリストに入れる
+            # 各ノードについて"トリガー時刻"を計算してリストに入れる
             events = []
             for ag in agents:
                 # 震源→エージェント間の距離
                 dist = math.hypot(ag.x - ori.x, ag.y - ori.y)
 
                 # 正確な到達時刻
+                # shim_wave_speed = 1.2 なので、距離1mで約0.83秒の差
                 t_trigger = sim_time + dist / shim_wave_speed
 
-                # 同一距離上のノードが完全同時に鳴らないように小さな乱数を足す
+                # 同一距離上のノードが完全同時に鳴らないように小さな乱数を足す（既存）
                 jitter = random.uniform(0.0, 0.05)
                 t_trigger += jitter
+                
+                # 新規：順序が入れ替わるほどの大きなランダム遅延
+                # 0～1.5秒のランダム遅延（波速度1.2m/sなら約1.8m分の距離差に相当）
+                # 震源近くは遅延を小さく、遠くは大きく
+                if dist < 2.0:  # 震源近く（2m以内）
+                    random_delay = random.uniform(0, 0.5)
+                elif dist < 5.0:  # 中距離（2-5m）
+                    random_delay = random.uniform(0, 1.0)
+                else:  # 遠距離（5m以上）
+                    random_delay = random.uniform(0, 1.5)
+                
+                t_trigger += random_delay
 
                 # 各イベントには「t_trigger / 該当エージェント / wave_color / wave_dir」をまとめておく
                 events.append((t_trigger, ag, wave_col, wdir))
@@ -1904,6 +2105,7 @@ while True:
             events.sort(key=lambda x: x[0])
             wave_events.append({
                 'origin': (ori.x, ori.y),
+                'origin_id': ori.node_id,  # 震源ノードのIDを追加
                 't0': sim_time,
                 'events': events
             })
@@ -2000,6 +2202,64 @@ while True:
             for l3, l2, _ in ag.leds:
                 l3.color = l2.color = ag.current_color
 
+        # # --- 4) wave_events をチェックして、『sim_time >= t_trigger』のイベントだけを順次発火する ---
+        # new_wave_events = []
+        # for wave in wave_events:
+        #     remaining = []
+        #     for (t_trigger, ag, wcol, wdir) in wave['events']:
+        #         if sim_time >= t_trigger:
+        #             # (a) ── 波にぶつかった瞬間の処理 ───────────────────────────
+        #             atk  = random.uniform(0.003, 0.01)
+        #             if ag.drop_mode == "rare":
+        #                 rel = 8.0
+        #             else:
+        #                 rel  = random.uniform(0.4, 4.0)
+        #             fAtk    = random.uniform(0.01, 0.2)
+        #             vibRate = random.uniform(0.1, 10)
+        #             vibDepth= random.uniform(0.01, 0.5)
+        #             amp     = random.uniform(0.03, 0.08)
+
+        #             # osc_client_sc.send_message(
+        #             #     "/shim",
+        #             #     [int(ag.node_id), atk, rel, fAtk, vibRate, vibDepth, amp]
+        #             # )
+        #             distance = math.hypot(ag.x - ori.x, ag.y - ori.y)
+        #             # osc_client_sc.send_message(
+        #             #     "/shim",
+        #             #     [int(ag.node_id), atk, rel, fAtk, vibRate, vibDepth, amp, distance]
+        #             # )
+                    
+        #             # z_off を強制的に大きくして跳ね上げ
+        #             ag.z = clamp(ag.z + shim_base_amp_m * 4, minZ, maxZ)
+
+        #             # ノードのステートを初期化／更新
+        #             ag.kick_time  = sim_time
+        #             ag.kick_peak  = yaw_peak_deg
+        #             ag.drop_time  = sim_time
+        #             ag.face_dir   = wdir
+        #             ag.color_from = ag.current_color
+        #             ag.color_to   = wcol * 0.5
+        #             ag.color_t0   = sim_time
+
+        #             # **ドロップモード（通常／レア）は事前に events リストへ入れておいてもよいし、
+        #             #   ここで再度判定しても問題ない。例として下記は「常に通常ドロップ」にする場合：**
+        #             # ag.drop_mode  = "norm"
+        #             # ag.drop_m     = drop_m_norm
+        #             # ag.drop_down_s= drop_down_s_n
+        #             # ag.drop_up_s  = drop_up_s_n
+        #             # ag.drop_total = drop_total_n
+
+        #             # ────────────────────────────────────────────────────────────
+        #         else:
+        #             remaining.append((t_trigger, ag, wcol, wdir))
+
+        #     # まだ消費していないイベントが残っていれば続行
+        #     if remaining:
+        #         wave['events'] = remaining
+        #         new_wave_events.append(wave)
+        #     # すべて消費済みなら、この波は破棄される
+        # wave_events = new_wave_events
+
         # --- 4) wave_events をチェックして、『sim_time >= t_trigger』のイベントだけを順次発火する ---
         new_wave_events = []
         for wave in wave_events:
@@ -2007,40 +2267,53 @@ while True:
             for (t_trigger, ag, wcol, wdir) in wave['events']:
                 if sim_time >= t_trigger:
                     # (a) ── 波にぶつかった瞬間の処理 ───────────────────────────
-                    atk  = random.uniform(0.003, 0.01)
-                    if ag.drop_mode == "rare":
-                        rel = 8.0
+                    
+                    # レアドロップの判定を追加
+                    if random.random() < rare_prob:  # 0.002 = 0.2%の確率
+                        ag.drop_mode = "rare"
+                        ag.drop_m = drop_m_rare       # 通常の6倍の深さ
+                        ag.drop_down_s = drop_down_s_r # 通常の6倍の時間
+                        ag.drop_up_s = drop_up_s_r     # 通常の6倍の時間
+                        ag.drop_total = drop_total_r   # 合計時間も6倍
+                        rel = 8.0  # 音も長く
                     else:
-                        rel  = random.uniform(0.4, 4.0)
-                    fAtk    = random.uniform(0.01, 0.5)
+                        ag.drop_mode = "norm"
+                        ag.drop_m = drop_m_norm
+                        ag.drop_down_s = drop_down_s_n
+                        ag.drop_up_s = drop_up_s_n
+                        ag.drop_total = drop_total_n
+                        rel = random.uniform(1.0, 2.0)
+                    
+                    atk = random.uniform(0.001, 0.009)
+                    fAtk = random.uniform(0.001, 0.02)
                     vibRate = random.uniform(0.1, 10)
-                    vibDepth= random.uniform(0.01, 0.5)
-                    amp     = random.uniform(0.03, 0.08)
+                    vibDepth = random.uniform(0.01, 0.5)
+                    amp = random.uniform(0.03, 0.08)
 
+                    # 震源からの距離を計算
+                    distance = math.hypot(ag.x - wave['origin'][0], ag.y - wave['origin'][1])
+                    
+                    # 震源ノードのIDを送信
                     osc_client_sc.send_message(
                         "/shim",
-                        [int(ag.node_id), atk, rel, fAtk, vibRate, vibDepth, amp]
+                        [int(wave['origin_id']), atk, rel, fAtk, vibRate, vibDepth, amp, distance]
                     )
+                    # osc_client_max.send_message(
+                    #     "/shim",
+                    #     [int(wave['origin_id']), atk, rel, fAtk, vibRate, vibDepth, amp, distance]
+                    # )
 
                     # z_off を強制的に大きくして跳ね上げ
                     ag.z = clamp(ag.z + shim_base_amp_m * 4, minZ, maxZ)
 
                     # ノードのステートを初期化／更新
-                    ag.kick_time  = sim_time
-                    ag.kick_peak  = yaw_peak_deg
-                    ag.drop_time  = sim_time
-                    ag.face_dir   = wdir
+                    ag.kick_time = sim_time
+                    ag.kick_peak = yaw_peak_deg
+                    ag.drop_time = sim_time
+                    ag.face_dir = wdir
                     ag.color_from = ag.current_color
-                    ag.color_to   = wcol * 0.5
-                    ag.color_t0   = sim_time
-
-                    # **ドロップモード（通常／レア）は事前に events リストへ入れておいてもよいし、
-                    #   ここで再度判定しても問題ない。例として下記は「常に通常ドロップ」にする場合：**
-                    # ag.drop_mode  = "norm"
-                    # ag.drop_m     = drop_m_norm
-                    # ag.drop_down_s= drop_down_s_n
-                    # ag.drop_up_s  = drop_up_s_n
-                    # ag.drop_total = drop_total_n
+                    ag.color_to = wcol * 0.5
+                    ag.color_t0 = sim_time
 
                     # ────────────────────────────────────────────────────────────
                 else:
@@ -2050,7 +2323,6 @@ while True:
             if remaining:
                 wave['events'] = remaining
                 new_wave_events.append(wave)
-            # すべて消費済みなら、この波は破棄される
 
         wave_events = new_wave_events
 
