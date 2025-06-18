@@ -277,10 +277,18 @@ ui = canvas(
 # ① 先に切り替え用コールバックを定義
 def on_mode_select(m):
     global is_transitioning, transition_start
-    # …既存のモード切り替えロジック（transition_start とか agents.prev_* の保存など）…
+    
     # マニュアルモードから他のモードに切り替わる場合
     if mode_menu.selected == "マニュアルモード":
         clear_manual_commands()
+    
+    # ★追加：全エージェントの自律モードを解除し、リングを非表示に
+    for ag in agents:
+        if hasattr(ag, 'autonomous_mode'):
+            ag.autonomous_mode = False
+            ag.actual_pitch = ag.pitch
+        if hasattr(ag, 'update_autonomous_indicator'):
+            ag.update_autonomous_indicator()  # これで赤いリングが消える
     
     # 既存のトランジション処理
     is_transitioning = True
@@ -304,11 +312,10 @@ def clear_manual_commands():
 
 # ② ドロップダウンを 1 回だけ生成し、すぐ隠す
 modes = ["マニュアルモード",
-         "天上天下モード",
-         "回る天井",
-        #  "鬼さんこちらモード",
          "魚群モード",
-         "蜂シマーモード"]
+         "蜂シマーモード",
+         "天上天下モード",
+         "回る天井"]
 mode_menu = menu(
     choices=modes,
     index=0,
@@ -750,6 +757,58 @@ class Audience:
         )
         self.noise_t = random.random() * 1000  # 個体差をつけるオフセット
 
+    # def update(self, dt):
+    #     # 1) ノイズ時間を進める
+    #     self.noise_t += dt * audience_noise_speed
+
+    #     # 1.5) 速度変動（Perlinノイズ＋振幅パラメータ）
+    #     delta = pnoise1(self.noise_t * 0.5)  # -1..+1
+    #     self.current_speed = self.speed * (1 + audience_speed_amp * delta * 0.5)
+
+    #     # 2) 移動方向のノイズ取得
+    #     n = pnoise2(self.x * audience_noise_scale, self.noise_t)
+    #     angle = n * 2 * math.pi
+
+    #     # 3) 基本移動量
+    #     dx = math.cos(angle) * self.current_speed * dt
+    #     dy = math.sin(angle) * self.current_speed * dt
+
+    #     # 4) 壁反発：壁に近いほど跳ね返る成分を加える
+    #     margin_x = min(self.x - self.xmin, self.xmax - self.x)
+    #     margin_y = min(self.y - self.ymin, self.ymax - self.y)
+    #     threshold = self.radius * 2
+    #     if margin_x < threshold:
+    #         repel = (threshold - margin_x) / threshold
+    #         dx += repel * (-math.cos(angle)) * self.current_speed * dt
+    #     if margin_y < threshold:
+    #         repel = (threshold - margin_y) / threshold
+    #         dy += repel * (-math.sin(angle)) * self.current_speed * dt
+
+    #     # 5) 他の観客との衝突回避
+    #     min_sep = self.radius * 2
+    #     for other in audiences:
+    #         if other is self: continue
+    #         dist = math.hypot(self.x - other.x, self.y - other.y)
+    #         if dist < min_sep and dist > 1e-3:
+    #             # お互い離れるベクトルを加算
+    #             ux = (self.x - other.x) / dist
+    #             uy = (self.y - other.y) / dist
+    #             factor = (min_sep - dist) / min_sep
+    #             dx += ux * factor * self.current_speed * dt
+    #             dy += uy * factor * self.current_speed * dt
+
+    #     # 6) 移動量を反映＆クランプ
+    #     new_x = self.x + dx
+    #     new_y = self.y + dy
+    #     self.x = min(max(new_x, self.xmin), self.xmax)
+    #     self.y = min(max(new_y, self.ymin), self.ymax)
+
+    #     # 7) 3D 体幹・頭部更新
+    #     self.body.pos = vector(self.x, self.y, 0)
+    #     self.head.pos = vector(self.x, self.y, self.cyl_h + self.radius)
+
+    #     # 8) 2D ドット更新
+    #     self.dot2d.pos = vector(self.x, self.y, -0.1)
     def update(self, dt):
         # 1) ノイズ時間を進める
         self.noise_t += dt * audience_noise_speed
@@ -758,51 +817,118 @@ class Audience:
         delta = pnoise1(self.noise_t * 0.5)  # -1..+1
         self.current_speed = self.speed * (1 + audience_speed_amp * delta * 0.5)
 
-        # 2) 移動方向のノイズ取得
-        n = pnoise2(self.x * audience_noise_scale, self.noise_t)
-        angle = n * 2 * math.pi
+        # 2) 移動方向のノイズ取得（スケールを調整して振動を減らす）
+        n = pnoise2(self.x * audience_noise_scale * 0.5, self.noise_t)
+        base_angle = n * 2 * math.pi
 
-        # 3) 基本移動量
-        dx = math.cos(angle) * self.current_speed * dt
-        dy = math.sin(angle) * self.current_speed * dt
+        # ★ 3) 改善版：中心への緩やかな引力を追加
+        center_x = (self.xmin + self.xmax) / 2
+        center_y = (self.ymin + self.ymax) / 2
+        to_center_x = center_x - self.x
+        to_center_y = center_y - self.y
+        dist_from_center = math.hypot(to_center_x, to_center_y)
+        
+        # エリアの半径
+        area_radius = min((self.xmax - self.xmin) / 2, (self.ymax - self.ymin) / 2)
+        
+        # 中心から離れるほど強くなる引力（0.0〜0.2に減少）
+        if dist_from_center > 0.01:
+            center_pull = min(0.2, (dist_from_center / area_radius) * 0.2)
+            center_angle = math.atan2(to_center_y, to_center_x)
+            
+            # ベース角度と中心への角度をブレンド
+            angle = base_angle * (1 - center_pull) + center_angle * center_pull
+        else:
+            angle = base_angle
 
-        # 4) 壁反発：壁に近いほど跳ね返る成分を加える
-        margin_x = min(self.x - self.xmin, self.xmax - self.x)
-        margin_y = min(self.y - self.ymin, self.ymax - self.y)
-        threshold = self.radius * 2
-        if margin_x < threshold:
-            repel = (threshold - margin_x) / threshold
-            dx += repel * (-math.cos(angle)) * self.current_speed * dt
-        if margin_y < threshold:
-            repel = (threshold - margin_y) / threshold
-            dy += repel * (-math.sin(angle)) * self.current_speed * dt
+        # 4) 基本移動量の初期化
+        dx = 0.0
+        dy = 0.0
 
-        # 5) 他の観客との衝突回避
-        min_sep = self.radius * 2
+        # ★ 5) 他の観客との衝突回避（先に計算して振動を防ぐ）
+        separation_radius = self.radius * 3.0  # 分離を始める距離
+        min_sep = self.radius * 2.2  # 最小許容距離
+        
         for other in audiences:
             if other is self: continue
             dist = math.hypot(self.x - other.x, self.y - other.y)
-            if dist < min_sep and dist > 1e-3:
-                # お互い離れるベクトルを加算
+            
+            if dist < separation_radius and dist > 1e-3:
+                # 反発ベクトル
                 ux = (self.x - other.x) / dist
                 uy = (self.y - other.y) / dist
-                factor = (min_sep - dist) / min_sep
-                dx += ux * factor * self.current_speed * dt
-                dy += uy * factor * self.current_speed * dt
+                
+                # 距離に応じた反発力（近いほど強い）
+                if dist < min_sep:
+                    # 強い反発
+                    force = 2.0 * (1 - dist / min_sep)
+                else:
+                    # 緩やかな反発
+                    force = 0.5 * (1 - (dist - min_sep) / (separation_radius - min_sep))
+                
+                dx += ux * force * self.current_speed * dt
+                dy += uy * force * self.current_speed * dt
 
-        # 6) 移動量を反映＆クランプ
+        # 6) 基本的な移動を追加（衝突回避の後）
+        dx += math.cos(angle) * self.current_speed * dt * 0.7  # 基本移動を少し抑制
+        dy += math.sin(angle) * self.current_speed * dt * 0.7
+
+        # ★ 7) 壁の処理（シンプル化）
+        wall_threshold = self.radius * 2.5
+        wall_force = 1.5
+        
+        # 各壁からの距離
+        dist_left = self.x - self.xmin
+        dist_right = self.xmax - self.x
+        dist_bottom = self.y - self.ymin
+        dist_top = self.ymax - self.y
+        
+        # 壁に近い時の反発
+        if dist_left < wall_threshold:
+            dx += (wall_threshold - dist_left) / wall_threshold * wall_force * dt
+        if dist_right < wall_threshold:
+            dx -= (wall_threshold - dist_right) / wall_threshold * wall_force * dt
+        if dist_bottom < wall_threshold:
+            dy += (wall_threshold - dist_bottom) / wall_threshold * wall_force * dt
+        if dist_top < wall_threshold:
+            dy -= (wall_threshold - dist_top) / wall_threshold * wall_force * dt
+
+        # ★ 8) 速度制限（振動防止）
+        speed_limit = self.current_speed * dt * 1.5
+        current_speed = math.hypot(dx, dy)
+        if current_speed > speed_limit:
+            dx = dx / current_speed * speed_limit
+            dy = dy / current_speed * speed_limit
+
+        # 9) 移動量を反映
         new_x = self.x + dx
         new_y = self.y + dy
-        self.x = min(max(new_x, self.xmin), self.xmax)
-        self.y = min(max(new_y, self.ymin), self.ymax)
+        
+        # ★ 10) 最終的な衝突チェック（他の観客と重ならないように）
+        position_valid = True
+        for other in audiences:
+            if other is self: continue
+            future_dist = math.hypot(new_x - other.x, new_y - other.y)
+            if future_dist < self.radius * 2:
+                position_valid = False
+                break
+        
+        # 位置が有効な場合のみ更新
+        if position_valid:
+            self.x = new_x
+            self.y = new_y
+        
+        # 壁の境界内に収める
+        margin = self.radius
+        self.x = min(max(self.x, self.xmin + margin), self.xmax - margin)
+        self.y = min(max(self.y, self.ymin + margin), self.ymax - margin)
 
-        # 7) 3D 体幹・頭部更新
+        # 11) 3D 体幹・頭部更新
         self.body.pos = vector(self.x, self.y, 0)
         self.head.pos = vector(self.x, self.y, self.cyl_h + self.radius)
 
-        # 8) 2D ドット更新
+        # 12) 2D ドット更新
         self.dot2d.pos = vector(self.x, self.y, -0.1)
-
 
 
 
@@ -1501,8 +1627,58 @@ while True:
         # else 部分は不要です（上でクリア済み）
 
 
-    ###回る天井モード--------------------------------------------------------------------   
+###回る天井モード--------------------------------------------------------------------   
     if mode_menu.selected == "回る天井":
+        # ========================================================
+        # 回る天井モードの初期化とトランジション
+        # ========================================================
+        
+        # モード切り替え検出
+        if not hasattr(mode_menu, 'ceiling_mode_initialized') or not mode_menu.ceiling_mode_initialized:
+            print(f"[回る天井モード] 初期化開始")
+            mode_menu.ceiling_mode_initialized = True
+            mode_menu.ceiling_transition_start = sim_time
+            mode_menu.ceiling_transition_duration = 2.0  # 2秒のトランジション
+            
+            # 平面の初期角度を設定（現在の状態から開始）
+            if not hasattr(mode_menu, 'plane_angle_saved'):
+                mode_menu.plane_angle_saved = plane_angle
+            
+            # 各エージェントの開始状態を保存
+            for ag in agents:
+                ag.ceiling_start_z = ag.z
+                ag.ceiling_start_yaw = ag.yaw
+                ag.ceiling_start_pitch = ag.pitch
+                ag.ceiling_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
+                
+                # 自律モードの状態も保存
+                ag.ceiling_start_autonomous = getattr(ag, 'autonomous_mode', False)
+                
+                print(f"  Agent {ag.node_id}: z={ag.ceiling_start_z:.2f}, "
+                      f"yaw={ag.ceiling_start_yaw:.1f}, pitch={ag.ceiling_start_pitch:.1f}")
+        
+        # 他のモードの初期化フラグをリセット
+        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "回る天井":
+            mode_menu.fish_mode_initialized = False
+            mode_menu.shimmer_initialized = False
+            mode_menu.tenge_initialized = False
+        
+        # トランジション進行度を計算
+        transition_elapsed = sim_time - getattr(mode_menu, 'ceiling_transition_start', sim_time)
+        transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'ceiling_transition_duration', 2.0))
+        
+        # イージング関数（easeInOutCubic）
+        if transition_progress < 0.5:
+            eased_progress = 4 * transition_progress * transition_progress * transition_progress
+        else:
+            eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
+        
+        # トランジション中かどうか
+        in_transition = transition_progress < 1.0
+        
+        # ========================================================
+        # 傾斜面の計算
+        # ========================================================
         # 1) 傾斜面の法線ベクトル
         a = radians(tilt_angle_deg)
         n0 = vector(0, -sin(a), cos(a))
@@ -1525,12 +1701,19 @@ while True:
         osc_client_max.send_message('/sin', sin_val)
         osc_client_max.send_message('/cos', cos_val)
 
-        # 3) 各エージェントごとに高さ固定＆向きイージング
-        for ag, z in zip(agents, plane_zs):
-            # (A) 高さは平面揃え
-            ag.z = z
+        # ========================================================
+        # 各エージェントごとの処理
+        # ========================================================
+        for ag, target_z_plane in zip(agents, plane_zs):
+            # (A) 高さの処理（トランジション対応）
+            if in_transition:
+                # トランジション中：開始位置から平面位置へ補間
+                ag.z = ag.ceiling_start_z + (target_z_plane - ag.ceiling_start_z) * eased_progress
+            else:
+                # 通常時：平面に固定
+                ag.z = target_z_plane
 
-            # (B) まず観客検出（人検出優先）
+            # (B) 観客検出（人検出優先）
             closest = None
             md = detect_radius
             for p in audiences:
@@ -1548,7 +1731,7 @@ while True:
                 target_pitch = degrees(atan2(dz, hypot(dx, dy)))
                 target_pitch = max(-60, min(60, target_pitch))  # クランプ
                 
-                # ★自律モードチェック（修正版）
+                # 自律モードチェック
                 yaw_diff = abs(((target_yaw - ag.yaw + 540) % 360) - 180)
                 if md < 1.5 and yaw_diff < 30:  # 1.5m以内かつ±30度以内
                     ag.autonomous_mode = True
@@ -1563,28 +1746,38 @@ while True:
                 target_yaw = degrees(atan2(uphill.y, uphill.x))
                 target_pitch = degrees(asin(uphill.z))
 
-            # (D) イージング適用（修正版：常にイージングを適用）
-            k = min(1.0, ease_speed * dt)
+            # (D) 向きの更新（トランジション対応）
+            if in_transition:
+                # トランジション中は徐々に速度を上げる
+                k = min(1.0, ease_speed * dt * eased_progress)
+                
+                # Pitchは0に向かって補間
+                ag.pitch = ag.ceiling_start_pitch + (target_pitch - ag.ceiling_start_pitch) * eased_progress
+            else:
+                # 通常のイージング
+                k = min(1.0, ease_speed * dt)
+                
+                # Pitchのイージング
+                dpitch = target_pitch - ag.pitch
+                ag.pitch += dpitch * k
             
-            # Yawのイージング
+            # Yawのイージング（トランジション中も通常も同じ処理）
             dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
             ag.yaw += dyaw * k
-            
-            # Pitchのイージング（自律モード・通常モード両方で適用）
-            dpitch = target_pitch - ag.pitch
-            ag.pitch += dpitch * k
             
             # actual_pitchを更新（自律モード用の表示値）
             ag.actual_pitch = ag.pitch
 
             # (E) 自律モードのビジュアル更新
+            # トランジション中は自律モードの表示を抑制
+            if in_transition:
+                ag.autonomous_mode = False
             ag.update_autonomous_indicator()
 
-            # (F) compute_axis()の修正版を使用
+            # (F) ジオメトリ更新
             ax = ag.compute_axis() * agent_length
             ctr = vector(ag.x, ag.y, ag.z)
             
-            # (G) ジオメトリ反映
             ag.body.pos = ctr - ax/2
             ag.body.axis = ax
             ag.cable.pos = ctr
@@ -1598,7 +1791,7 @@ while True:
                                 ag.y + u.y*(agent_length*off),
                                 0)
             
-            # (H) 色更新（従来通り）
+            # (H) 色更新（トランジション対応）
             global_hue = (sim_time * color_speed) % 1.0
             height_ratio = (ag.z - minZp) / (maxZp - minZp) if maxZp != minZp else 0.5
             
@@ -1608,365 +1801,288 @@ while True:
             if ag.node_id == 46:
                 osc_client_max.send_message('/id46/z', ag.z)
             
+            # 目標色の計算
             hue = (global_hue + height_ratio * 0.125) % 1.0
             brightness = 1.0 - 0.5 * height_ratio
             r, g, b = colorsys.hsv_to_rgb(hue, 1.0, brightness)
             osc_client_max.send_message('/hue', hue)
             
-            # ★自律モード時は色を少し変える（オプション）
-            if ag.autonomous_mode:
-                # 赤みを少し加える
+            # 自律モード時は色を少し変える（トランジション完了後のみ）
+            if ag.autonomous_mode and not in_transition:
                 r = min(1.0, r * 0.8 + 0.2)
             
-            col = vector(r, g, b)
-            ag.body.color = col
+            target_color = vector(r, g, b)
+            
+            # トランジション中の色補間
+            if in_transition:
+                # 開始色から目標色へ補間
+                ag.current_color = vector(
+                    ag.ceiling_start_color.x + (target_color.x - ag.ceiling_start_color.x) * eased_progress,
+                    ag.ceiling_start_color.y + (target_color.y - ag.ceiling_start_color.y) * eased_progress,
+                    ag.ceiling_start_color.z + (target_color.z - ag.ceiling_start_color.z) * eased_progress
+                )
+            else:
+                ag.current_color = target_color
+            
+            # 色を適用
+            ag.body.color = ag.current_color
             for ld3, ld2, _ in ag.leds:
-                ld3.color = ld2.color = col
-            ag.current_color = col
+                ld3.color = ld2.color = ag.current_color
             
-            # (I) MQTT送信（自律モード対応済みのsend_robot_data）
+            # (I) MQTT送信
             send_queue.put(ag)
-    # if mode_menu.selected == "回る天井":
-    #     # 1) 傾斜面の法線ベクトル
-    #     a = radians(tilt_angle_deg)
-    #     n0 = vector(0, -sin(a), cos(a))
-    #     ca, sa = cos(plane_angle), sin(plane_angle)
-    #     normal = vector(n0.x*ca - n0.y*sa,
-    #                     n0.x*sa + n0.y*ca,
-    #                     n0.z).norm()
-
-    #     # 2) 平面上 Z のリストを先に作る
-    #     plane_zs = []
-    #     for ag in agents:
-    #         dx, dy = ag.x - centerX, ag.y - centerY
-    #         z_p = plane_height - (normal.x*dx + normal.y*dy) / normal.z
-    #         plane_zs.append(min(max(minZ, z_p), maxZ))
-    #     minZp, maxZp = min(plane_zs), max(plane_zs)
-
-    #     # OSCメッセージ送信
-    #     sin_val = math.sin(sim_time)
-    #     cos_val = math.cos(sim_time)
-    #     osc_client_max.send_message('/sin', sin_val)
-    #     osc_client_max.send_message('/cos', cos_val)
-
-    #     # 3) 各エージェントごとに高さ固定＆向きイージング
-    #     for ag, z in zip(agents, plane_zs):
-    #         # (A) 高さは平面揃え
-    #         ag.z = z
-
-    #         # (B) まず観客検出（人検出優先）
-    #         closest = None
-    #         md = detect_radius
-    #         for p in audiences:
-    #             d = math.hypot(p.x - ag.x, p.y - ag.y)
-    #             if d < md:
-    #                 md = d
-    #                 closest = p
-            
-    #         # (C) ターゲット yaw/pitch 計算
-    #         if closest:
-    #             # 観客がいる場合：観客を向く
-    #             dx, dy = closest.x - ag.x, closest.y - ag.y
-    #             dz = closest.height - ag.z
-    #             target_yaw = degrees(atan2(dy, dx))
-    #             target_pitch = degrees(atan2(dz, hypot(dx, dy)))
-                
-    #             # ★自律モードチェック（追加）
-    #             # 観客が1.5m以内かつ正面を向いている場合
-    #             yaw_diff = abs(((target_yaw - ag.yaw + 540) % 360) - 180)
-    #             if md < 1.5 and yaw_diff < 30:  # 1.5m以内かつ±30度以内
-    #                 ag.autonomous_mode = True
-    #                 ag.actual_pitch = max(-60, min(60, target_pitch))  # 実際の表示用pitch
-    #             else:
-    #                 ag.autonomous_mode = False
-    #                 ag.actual_pitch = ag.pitch
-    #         else:
-    #             # 観客がいない場合：斜面を登る方向を向く
-    #             ag.autonomous_mode = False  # 自律モードOFF
-    #             ag.actual_pitch = ag.pitch
-                
-    #             g_dot_n = -normal.z
-    #             uphill = (g_dot_n*normal - vector(0,0,-1)).norm()
-    #             target_yaw = degrees(atan2(uphill.y, uphill.x))
-    #             target_pitch = degrees(asin(uphill.z))
-
-    #         # (D) イージング適用（yawとpitchの滑らかな変化）
-    #         k = min(1.0, ease_speed * dt)
-    #         dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
-    #         ag.yaw += dyaw * k
-            
-    #         # 自律モードでない時のみpitchをイージング
-    #         if not ag.autonomous_mode:
-    #             ag.pitch += (target_pitch - ag.pitch) * k
-    #             ag.actual_pitch = ag.pitch
-    #         # 自律モード時はactual_pitchは既に設定済み
-
-    #         # (E) 自律モードのビジュアル更新（追加）
-    #         ag.update_autonomous_indicator()
-
-    #         # (F) compute_axis()の修正版を使用
-    #         # 自律モード時はactual_pitchを使用するように修正済み
-    #         ax = ag.compute_axis() * agent_length
-    #         ctr = vector(ag.x, ag.y, ag.z)
-            
-    #         # (G) ジオメトリ反映
-    #         ag.body.pos = ctr - ax/2
-    #         ag.body.axis = ax
-    #         ag.cable.pos = ctr
-    #         ag.cable.axis = vector(0,0, maxZ - ag.z)
-            
-    #         # LEDを筒と一緒に動かす
-    #         u = ax.norm()
-    #         for ld3, ld2, off in ag.leds:
-    #             ld3.pos = ctr + u*(agent_length*off)
-    #             ld2.pos = vector(ag.x + u.x*(agent_length*off),
-    #                             ag.y + u.y*(agent_length*off),
-    #                             0)
-            
-    #         # (H) 色更新（従来通り）
-    #         global_hue = (sim_time * color_speed) % 1.0
-    #         height_ratio = (ag.z - minZp) / (maxZp - minZp) if maxZp != minZp else 0.5
-            
-    #         # 特定IDのOSC送信
-    #         if ag.node_id == 1:        
-    #             osc_client_max.send_message('/id1/z', ag.z)
-    #         if ag.node_id == 46:
-    #             osc_client_max.send_message('/id46/z', ag.z)
-            
-    #         hue = (global_hue + height_ratio * 0.125) % 1.0
-    #         brightness = 1.0 - 0.5 * height_ratio
-    #         r, g, b = colorsys.hsv_to_rgb(hue, 1.0, brightness)
-    #         osc_client_max.send_message('/hue', hue)
-            
-    #         # ★自律モード時は色を少し変える（オプション）
-    #         if ag.autonomous_mode:
-    #             # 赤みを少し加える
-    #             r = min(1.0, r * 0.8 + 0.2)
-            
-    #         col = vector(r, g, b)
-    #         ag.body.color = col
-    #         for ld3, ld2, _ in ag.leds:
-    #             ld3.color = ld2.color = col
-    #         ag.current_color = col
-            
-    #         # (I) MQTT送信（自律モード対応済みのsend_robot_data）
-    #         send_queue.put(ag)
-    # if mode_menu.selected == "回る天井":
-    #     # 1) 傾斜面の法線ベクトル
-    #     a = radians(tilt_angle_deg)
-    #     n0 = vector(0, -sin(a), cos(a))
-    #     ca, sa = cos(plane_angle), sin(plane_angle)
-    #     normal = vector(n0.x*ca - n0.y*sa,
-    #                     n0.x*sa + n0.y*ca,
-    #                     n0.z).norm()
-
-    #     # 2) 平面上 Z のリストを先に作る ← 必ずここで定義
-    #     plane_zs = []
-    #     for ag in agents:
-    #         dx, dy = ag.x - centerX, ag.y - centerY
-    #         z_p = plane_height - (normal.x*dx + normal.y*dy) / normal.z
-    #         plane_zs.append(min(max(minZ, z_p), maxZ))
-    #     minZp, maxZp = min(plane_zs), max(plane_zs)
-
-    #     # ★★★ ここに追加 ★★★
-    #     sin_val = math.sin(sim_time)   # 任意で周波数掛け算
-    #     cos_val = math.cos(sim_time)
-    #     osc_client_max.send_message('/sin', sin_val)
-    #     osc_client_max.send_message('/cos', cos_val)
-    #     # ★★★★★★★★★★★★★
-
-    #     # 3) 各エージェントごとに高さ固定＆向きイージング
-    #     for ag, z in zip(agents, plane_zs):
-    #         # (A) 高さは平面揃え
-    #         ag.z = z
-
-    #         # (B) ターゲット yaw/pitch
-    #         closest = None
-    #         md = detect_radius
-    #         for p in audiences:
-    #             d = math.hypot(p.x - ag.x, p.y - ag.y)
-    #             if d < md:
-    #                 md = d; closest = p
-    #         if closest:
-    #             dx, dy = closest.x - ag.x, closest.y - ag.y
-    #             dz = closest.height - ag.z
-    #             target_yaw   = degrees(atan2(dy, dx))
-    #             target_pitch = degrees(atan2(dz, hypot(dx, dy)))
-    #         else:
-    #             g_dot_n = -normal.z
-    #             uphill  = (g_dot_n*normal - vector(0,0,-1)).norm()
-    #             target_yaw   = degrees(atan2(uphill.y, uphill.x))
-    #             target_pitch = degrees(asin(uphill.z))
-
-    #         # (C) イージング適用
-    #         k = min(1.0, ease_speed * dt)
-    #         dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
-    #         ag.yaw   += dyaw * k
-    #         ag.pitch += (target_pitch - ag.pitch) * k
-
-    #         # (D) 軸再生成～ジオメトリ反映
-    #         ax  = ag.compute_axis() * agent_length
-    #         ctr = vector(ag.x, ag.y, ag.z)
-    #         ag.body.pos   = ctr - ax/2
-    #         ag.body.axis  = ax
-    #         ag.cable.pos  = ctr
-    #         ag.cable.axis = vector(0,0, maxZ - ag.z)
-    #         # ag.dot2d.pos  = vector(ag.x, ag.y, -0.1)
-    #         u = ax.norm()
-    #         for ld3, ld2, off in ag.leds:
-    #             ld3.pos = ctr + u*(agent_length*off)
-    #             ld2.pos = vector(ag.x + u.x*(agent_length*off),
-    #                             ag.y + u.y*(agent_length*off),
-    #                             0)
-    #         # ─── 7) 色更新（従来通り）────────────────────────
-    #         global_hue   = (sim_time * color_speed) % 1.0
-    #         height_ratio = (ag.z - minZp) / (maxZp - minZp)
-    #         # if ag.node_id == "1":                 # ← 文字列比較
-    #         if ag.node_id == 1:        
-    #             osc_client_max.send_message('/id1/z',       ag.z)          # 実座標
-    #             # osc_client_max.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
-    #         # if ag.node_id == "46":                 # ← 文字列比較
-    #         if ag.node_id == 46:
-    #             osc_client_max.send_message('/id46/z',       ag.z)          # 実座標
-    #             # osc_client_max.send_message('/id1/ratio',   height_ratio)  # 0-1 正規化
-    #         hue        = (global_hue + height_ratio * 0.125) % 1.0
-    #         brightness = 1.0 - 0.5 * height_ratio
-    #         r, g, b    = colorsys.hsv_to_rgb(hue, 1.0, brightness)
-    #         osc_client_max.send_message('/hue', hue)   # ★ここを追加★
-    #         col        = vector(r, g, b)
-    #         ag.body.color = col
-    #         for ld3, ld2, _ in ag.leds:
-    #             ld3.color = ld2.color = col
-    #         ag.current_color = col   
-    #         # ─── 5) 描画・LED・MQTT 出力 ───────────────────────────────
-    #         # for ag in agents:
-    #         #     ag.display()
-    #         #     ag.set_leds()
-    #         send_queue.put(ag)
 
 
     # ─── 天上天下モード ────────────────────────────────
     elif mode_menu.selected == "天上天下モード":
-        # ─────────────────────────────────────────────
-        # 初期化
-        # ─────────────────────────────────────────────
-        if not hasattr(agents[0], 'tenge_phase'):
-            for ag in agents:
-                ag.tenge_phase = 0.0  # 各エージェントの位相
-                
-        if not hasattr(mode_menu, 'tenge_amplitude'):
+        # ========================================================
+        # 天上天下モードの初期化とトランジション
+        # ========================================================
+        
+        # モード切り替え検出
+        if not hasattr(mode_menu, 'tenge_mode_initialized') or not mode_menu.tenge_mode_initialized:
+            print(f"[天上天下モード] 初期化開始")
+            mode_menu.tenge_mode_initialized = True
+            mode_menu.tenge_transition_start = sim_time
+            mode_menu.tenge_transition_duration = 2.0  # 2秒のトランジション
+            
+            # 初期パラメータ設定
             mode_menu.tenge_amplitude = 0.35  # 初期振幅
             mode_menu.tenge_speed = 1.0  # ラジアン/秒
             
-        # 高さの範囲を2.0m〜2.7mに設定
+            # モード切り替え検出
+            if not hasattr(mode_menu, 'last_crossing_phase'):
+                mode_menu.last_crossing_phase = 0.0
+            
+            # 各エージェントの開始状態を保存
+            for ag in agents:
+                ag.tenge_start_z = ag.z
+                ag.tenge_start_yaw = ag.yaw
+                ag.tenge_start_pitch = ag.pitch
+                ag.tenge_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
+                
+                # 位相の初期化
+                ag.tenge_phase = 0.0
+                
+                # グループをリセット
+                ag.group = None
+                
+                print(f"  Agent {ag.node_id}: z={ag.tenge_start_z:.2f}→2.35(中間), "
+                      f"yaw={ag.tenge_start_yaw:.1f}, pitch={ag.tenge_start_pitch:.1f}")
+        
+        # 他のモードの初期化フラグをリセット
+        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "天上天下モード":
+            mode_menu.fish_mode_initialized = False
+            mode_menu.shimmer_initialized = False
+            mode_menu.ceiling_mode_initialized = False
+        
+        # トランジション進行度を計算
+        transition_elapsed = sim_time - getattr(mode_menu, 'tenge_transition_start', sim_time)
+        transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'tenge_transition_duration', 2.0))
+        
+        # イージング関数（easeInOutCubic）
+        if transition_progress < 0.5:
+            eased_progress = 4 * transition_progress * transition_progress * transition_progress
+        else:
+            eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
+        
+        # トランジション中かどうか
+        in_transition = transition_progress < 1.0
+        
+        # ─────────────────────────────────────────────
+        # パラメータ設定
+        # ─────────────────────────────────────────────
         min_height = 2.0
         max_height = 2.7
         center_z = 2.35  # 中間点（すれ違いポイント）
 
         # ─────────────────────────────────────────────
-        # 1) 位相を進める（全員同じ速度で）
+        # 1) 位相を進める（トランジション完了後のみ）
         # ─────────────────────────────────────────────
-        for ag in agents:
-            ag.tenge_phase += mode_menu.tenge_speed * dt
-            
+        if not in_transition:
+            for ag in agents:
+                ag.tenge_phase += mode_menu.tenge_speed * dt
+        else:
+            # トランジション中は位相を0に保つ
+            for ag in agents:
+                ag.tenge_phase = 0.0
+        
         # ─────────────────────────────────────────────
         # 2) 高さを計算
         # ─────────────────────────────────────────────
-        # Group Aの代表の位相と高さ
-        phase_a = agents[current_groupA_idx].tenge_phase
-        z_a = center_z + mode_menu.tenge_amplitude * math.cos(phase_a)
+        # 振幅の段階的増加（トランジション後3秒かけて）
+        amplitude_ramp_duration = 3.0
+        time_since_transition = sim_time - getattr(mode_menu, 'tenge_transition_start', sim_time) - getattr(mode_menu, 'tenge_transition_duration', 2.0)
         
-        # Group Bの高さ（逆位相）
-        z_b = center_z - mode_menu.tenge_amplitude * math.cos(phase_a)
+        if in_transition:
+            # トランジション中：全員を中間高さに集める
+            target_z_a = center_z
+            target_z_b = center_z
+            current_amplitude = 0.0
+        elif time_since_transition < amplitude_ramp_duration:
+            # トランジション直後：振幅を徐々に増やす
+            ramp_progress = time_since_transition / amplitude_ramp_duration
+            current_amplitude = mode_menu.tenge_amplitude * ramp_progress
+            
+            phase_a = agents[current_groupA_idx].tenge_phase
+            target_z_a = center_z + current_amplitude * math.cos(phase_a)
+            target_z_b = center_z - current_amplitude * math.cos(phase_a)
+        else:
+            # 通常時：フル振幅
+            phase_a = agents[current_groupA_idx].tenge_phase
+            target_z_a = center_z + mode_menu.tenge_amplitude * math.cos(phase_a)
+            target_z_b = center_z - mode_menu.tenge_amplitude * math.cos(phase_a)
         
         # ─────────────────────────────────────────────
-        # 3) すれ違い検出（中央を通過する瞬間）
+        # 3) すれ違い検出（トランジション完了後のみ）
         # ─────────────────────────────────────────────
-        # cos(phase) = 0 となる瞬間を検出
-        # phase = π/2 + nπ の時
-        phase_mod = phase_a % (2 * math.pi)
         crossing = False
-        
-        # π/2付近または3π/2付近
-        if (1.4 < phase_mod < 1.7) or (4.6 < phase_mod < 4.8):
-            if not hasattr(mode_menu, 'last_crossing_phase') or abs(phase_a - mode_menu.last_crossing_phase) > 1.0:
-                crossing = True
-                mode_menu.last_crossing_phase = phase_a
-        
-        if crossing:
-            # 新しいGroup Aを選択
-            choices = list(range(len(agents)))
-            choices.remove(current_groupA_idx)
-            current_groupA_idx = random.choice(choices)
-            osc_client_max.send_message('/trig', 0)
+        if not in_transition:
+            phase_a = agents[current_groupA_idx].tenge_phase
+            phase_mod = phase_a % (2 * math.pi)
             
-            # 新しいパラメータ
-            # 振幅: 0.1〜0.35 (最小0.1m、最大0.35mの振幅)
-            mode_menu.tenge_amplitude = random.uniform(0.1, 0.35)
-            mode_menu.tenge_speed = random.uniform(0.8, 1.8)  # ラジアン/秒
+            # π/2付近または3π/2付近
+            if (1.4 < phase_mod < 1.7) or (4.6 < phase_mod < 4.8):
+                if not hasattr(mode_menu, 'last_crossing_phase') or abs(phase_a - mode_menu.last_crossing_phase) > 1.0:
+                    crossing = True
+                    mode_menu.last_crossing_phase = phase_a
             
-            print(f"すれ違い! 新Group A: {current_groupA_idx}")
+            if crossing:
+                # 新しいGroup Aを選択
+                choices = list(range(len(agents)))
+                choices.remove(current_groupA_idx)
+                current_groupA_idx = random.choice(choices)
+                # osc_client_max.send_message('/trig', 0)
+                selected_node_id = agents[current_groupA_idx].node_id
+                osc_client_max.send_message('/trig', int(selected_node_id))
+                # トランジション中はすぐに反映                
+                # 新しいパラメータ
+                mode_menu.tenge_amplitude = random.uniform(0.1, 0.35)
+                mode_menu.tenge_speed = random.uniform(0.8, 1.8)
+                
+                print(f"すれ違い! 新Group A: {current_groupA_idx}")
 
         # ─────────────────────────────────────────────
         # 4) 各エージェントに高さを設定
         # ─────────────────────────────────────────────
         for idx, ag in enumerate(agents):
+            # グループ割り当て
             if idx == current_groupA_idx:
-                ag.z = z_a
                 new_group = "A"
+                target_color = vector(1.0, 0.3, 0.3)  # 赤系
             else:
-                ag.z = z_b
                 new_group = "B"
-                
+                target_color = vector(0.25, 0.6, 1.0)  # 青系
+            
+            # 高さの設定
+            if in_transition:
+                # トランジション中：開始位置から中間位置へ（全員同じ高さ）
+                ag.z = ag.tenge_start_z + (center_z - ag.tenge_start_z) * eased_progress
+            else:
+                # 通常時：グループに応じた高さ
+                if new_group == "A":
+                    ag.z = target_z_a
+                else:
+                    ag.z = target_z_b
+            
             # グループ変更の処理
             if new_group != getattr(ag, "group", None):
                 ag.prev_color = getattr(ag, "current_color", vector(1, 1, 1))
-                ag.current_color = vector(1.0, 0.3, 0.3) if new_group == "A" else vector(0.25, 0.6, 1.0)
+                if in_transition:
+                    # トランジション中は徐々に色を変える
+                    ag.target_tenge_color = target_color
+                else:
+                    ag.current_color = vector(1.0, 0.3, 0.3) if new_group == "A" else vector(0.25, 0.6, 1.0)
                 ag.group = new_group
 
         # ─────────────────────────────────────────────
-        # 5) 以下は元のコードと同じ
+        # 5) 向きとジオメトリ
         # ─────────────────────────────────────────────
         
-        # Group Aの切り替え判定用（互換性のため）
-        za = z_a
-        zb = z_b
-        z_diff = za - zb
-        prev_z_diff = z_diff
-
         # 向きとジオメトリ
         for ag in agents:
-            # A) Group-B はリーダー (A) を向く
-            if ag.group == "B":
+            # A) Group Aは最も近い観客を探して自律モード
+            if ag.group == "A":
+                closest = None
+                min_dist = float('inf')
+                for p in audiences:
+                    d = math.hypot(p.x - ag.x, p.y - ag.y)
+                    if d < min_dist:
+                        min_dist = d
+                        closest = p
+                
+                if closest:
+                    dx, dy = closest.x - ag.x, closest.y - ag.y
+                    dz = closest.height - ag.z
+                    tgt_yaw = math.degrees(math.atan2(dy, dx))
+                    tgt_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+                    tgt_pitch = max(-60, min(60, tgt_pitch))
+                    
+                    # Group Aは常に自律モード（トランジション完了後）
+                    ag.autonomous_mode = True if not in_transition else False
+                else:
+                    ag.autonomous_mode = False
+                    tgt_yaw, tgt_pitch = ag.yaw, ag.pitch
+            
+            # B) Group Bはリーダーを向く or 近くの観客を優先
+            else:  # ag.group == "B"
+                # まずリーダー（Group A）の方向を計算
                 lead = agents[current_groupA_idx]
                 dx, dy = lead.x - ag.x, lead.y - ag.y
-                dz     = lead.z - ag.z
-                base_yaw   = math.degrees(math.atan2(dy, dx))
+                dz = lead.z - ag.z
+                base_yaw = math.degrees(math.atan2(dy, dx))
                 base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-            else:
-                base_yaw, base_pitch = ag.yaw, ag.pitch
+                
+                # 近くに観客がいるかチェック
+                closest, md = None, detect_radius
+                for p in audiences:
+                    d = math.hypot(p.x - ag.x, p.y - ag.y)
+                    if d < md:
+                        md, closest = d, p
+                
+                if closest:
+                    dx2, dy2 = closest.x - ag.x, closest.y - ag.y
+                    dz2 = closest.height - ag.z
+                    tgt_yaw = math.degrees(math.atan2(dy2, dx2))
+                    tgt_pitch = math.degrees(math.atan2(dz2, math.hypot(dx2, dy2)))
+                    tgt_pitch = max(-60, min(60, tgt_pitch))
+                    
+                    # 自律モードチェック（トランジション完了後）
+                    if not in_transition:
+                        yaw_diff = abs(((tgt_yaw - ag.yaw + 540) % 360) - 180)
+                        if md < 1.5 and yaw_diff < 30:
+                            ag.autonomous_mode = True
+                        else:
+                            ag.autonomous_mode = False
+                    else:
+                        ag.autonomous_mode = False
+                else:
+                    ag.autonomous_mode = False
+                    tgt_yaw, tgt_pitch = base_yaw, base_pitch
 
-            # B) 近くに観客がいればそちらを優先
-            closest, md = None, detect_radius
-            for p in audiences:
-                d = math.hypot(p.x - ag.x, p.y - ag.y)
-                if d < md:
-                    md, closest = d, p
-            if closest:
-                dx2, dy2 = closest.x - ag.x, closest.y - ag.y
-                dz2      = closest.height - ag.z
-                tgt_yaw   = math.degrees(math.atan2(dy2, dx2))
-                tgt_pitch = math.degrees(math.atan2(dz2, math.hypot(dx2, dy2)))
+            # C) 向きの更新（トランジション対応）
+            if in_transition:
+                # トランジション中は徐々に動きを開始
+                k = min(1.0, ease_speed * dt * eased_progress)
+                # Pitchは0に向かって補間
+                ag.pitch = ag.tenge_start_pitch + (0 - ag.tenge_start_pitch) * eased_progress
             else:
-                tgt_yaw, tgt_pitch = base_yaw, base_pitch
-
-            # C) イージング
-            k = min(1.0, ease_speed * dt)
+                # 通常のイージング
+                k = min(1.0, ease_speed * dt)
+                dpitch = tgt_pitch - ag.pitch
+                ag.pitch += dpitch * k
+            
+            # Yawのイージング
             dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
-            ag.yaw   += dyaw * k
-            ag.pitch += (tgt_pitch - ag.pitch) * k
+            ag.yaw += dyaw * k
+            
+            # actual_pitchを更新
+            ag.actual_pitch = ag.pitch
 
-            # D) ジオメトリ
+            # D) 自律モードのビジュアル更新
+            ag.update_autonomous_indicator()
+
+            # E) ジオメトリ
             axis = ag.compute_axis() * agent_length
             ctr  = vector(ag.x, ag.y, ag.z)
             ag.body.pos  = ctr - axis/2
@@ -1983,209 +2099,169 @@ while True:
                     ag.y + u.y * (agent_length * offset),
                     0
                 )
-            
-        send_group_stats(agents, minZ, maxZ)  
-
-        # 色フェード
+        
+        # ─────────────────────────────────────────────
+        # 6) 色の処理（トランジション対応）
+        # ─────────────────────────────────────────────
+        send_group_stats(agents, minZ, maxZ)
+        
         for ag in agents:
-            ag.set_leds_tenge(sim_time, dt)
+            if in_transition:
+                # トランジション中：開始色から目標色へ補間
+                if hasattr(ag, 'target_tenge_color'):
+                    ag.current_color = vector(
+                        ag.tenge_start_color.x + (ag.target_tenge_color.x - ag.tenge_start_color.x) * eased_progress,
+                        ag.tenge_start_color.y + (ag.target_tenge_color.y - ag.tenge_start_color.y) * eased_progress,
+                        ag.tenge_start_color.z + (ag.target_tenge_color.z - ag.tenge_start_color.z) * eased_progress
+                    )
+                
+                # 色を直接適用
+                ag.body.color = ag.current_color
+                for ld3, ld2, _ in ag.leds:
+                    ld3.color = ld2.color = ag.current_color
+            else:
+                # 通常時：既存の色フェード処理
+                ag.set_leds_tenge(sim_time, dt)
 
         # 描画 & MQTT 送信
         for ag in agents:
             ag.display()
-            send_queue.put(ag)
+            send_queue.put(ag)  
 
-    elif mode_menu.selected == "鬼さんこちらモード":
-        # 1) 混雑チェック
-        is_crowded = True
-        step = 0.5
-        for cx in frange(x_range[0], x_range[1], step):
-            for cy in frange(y_range[0], y_range[1], step):
-                if all(math.hypot(p.x-cx, p.y-cy) > oni_empty_radius
-                       for p in audiences):
-                    is_crowded = False
-                    break
-            if not is_crowded: break
-        if is_crowded:
-            print("人多すぎ")
+    # elif mode_menu.selected == "魚群モード":
+    #     # 0) 流れベクトル（逆向き）を先に求める
+    #     flow_vecs = []
+    #     for ag in agents:
+    #         fx = pnoise2(ag.i*noiseScale + noise_time,
+    #                     ag.j*noiseScale + noise_time)
+    #         fy = pnoise2(ag.i*noiseScale + noise_time + 50,
+    #                     ag.j*noiseScale + noise_time + 50)
+    #         v = vector(-fx, -fy, 0).norm()  # 逆向き
+    #         flow_vecs.append(v)
 
-        # 2) その他の筒は 2.5~maxZ をゆらゆら＆クランプ
-        for i, ag in enumerate(agents):
-            if i == oni_current_idx: continue
-            ag.update_boids(sim_time)
-            tgt_h = random.uniform(2.5, maxZ)
-            ag.z += (tgt_h - ag.z) * waveStrength * dt
-            ag.z = max(2.5, min(maxZ, ag.z))
-            update_geometry(ag)
-            ag.set_leds()
+    #     # 1) Boids in XY 平面
+    #     for idx, ag in enumerate(agents):
+    #         sep = coh = align = vector(0,0,0)
+    #         cnt = 0
+    #         for jdx in ag.neighbors:
+    #             if 0 <= jdx < len(agents):     # ★ガードを追加★
+    #                 nb = agents[jdx]
+    #                 dxy   = vector(nb.x - ag.x, nb.y - ag.y, 0)
+    #                 dist  = dxy.mag
+    #                 if dist < fish_sep_dist:
+    #                     sep -= dxy / (dist**2 + 1e-3)
+    #                 coh   += dxy
+    #                 align += flow_vecs[jdx]
+    #                 cnt   += 1
 
-        # 3) ステートマシン
-        if oni_state == "idle":
-            if sim_time >= oni_next_time and audiences:
-                cands = [
-                    idx for idx, ag in enumerate(agents)
-                    if any(
-                        oni_min_select_dist
-                          < math.hypot(p.x-ag.x, p.y-ag.y)
-                          < oni_max_select_dist
-                        for p in audiences
-                    )
-                ]
-                if cands:
-                    oni_current_idx      = random.choice(cands)
-                    oni_target_aud       = random.choice(audiences)
-                    # ── ここで降下停止高さを毎回ランダムに決定 ──
-                    oni_target_z         = random.uniform(1.25, 1.6)
-                    oni_state            = "descending"
-                    # 色イージング初期化（降下する筒の色相を反対に、明度を最大に）
-                    oni_color_start   = sim_time
-                    oni_initial_color = agents[oni_current_idx].current_color
-                    # HSV に変換（元の明度は無視）
-                    h0, s0, _ = colorsys.rgb_to_hsv(
-                        oni_initial_color.x,
-                        oni_initial_color.y,
-                        oni_initial_color.z
-                    )
-                    # 反対の色相、元の彩度、明度は常に 1.0
-                    h1 = (h0 + 0.5) % 1.0
-                    r1, g1, b1 = colorsys.hsv_to_rgb(h1, s0, 1.0)
-                    oni_target_color = vector(r1, g1, b1)
+    #         if cnt:
+    #             coh /= cnt
+    #             align /= cnt
 
+    #         steer = (sep*1.8 +
+    #                 coh * fish_coh_factor +
+    #                 align * fish_align_factor +
+    #                 flow_vecs[idx])
 
-        elif oni_state == "descending":
-            ag = agents[oni_current_idx]
-            # 近づいてきた人がいれば最も近い人にターゲット変更
-            closest = None
-            md = 2.0
-            for p in audiences:
-                d = math.hypot(p.x-ag.x, p.y-ag.y)
-                if d < md:
-                    md = d
-                    closest = p
-            if closest:
-                oni_target_aud = closest
+    #         # 目標方向 → yaw/pitch
+    #         steer = steer.norm()
+    #         tgt_yaw   = math.degrees(math.atan2(steer.y, steer.x))
+    #         tgt_pitch = 0  # 水平泳ぎ
 
-            # 高さを下げる（1.25mまで）、速度倍速
-            ag.z = max(oni_target_z, ag.z - (oni_descent_speed * 2) * dt)
-            update_geometry(ag)
+    #         # 尾びれオシレータ
+    #         phase = ag.idx * 0.7  # 個体差
+    #         osc   = fin_osc_amp_deg * math.sin(2*math.pi*fin_osc_freq_hz*sim_time + phase)
+    #         tgt_yaw += osc
 
-            # 常に観客を向く
-            dx, dy = oni_target_aud.x - ag.x, oni_target_aud.y - ag.y
-            dz     = oni_target_aud.height - ag.z
-            ag.yaw   = math.degrees(math.atan2(dy, dx))
-            ag.pitch = max(-60, min(60,
-                math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-            ))
+    #         # イージング
+    #         k = min(1.0, ease_speed * dt)
+    #         dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+    #         ag.yaw   += dyaw   * k
+    #         ag.pitch += (tgt_pitch - ag.pitch) * k
 
-            # 色イージング（2秒で反対色へ）
-            tcol = min((sim_time - oni_color_start) / 2.0, 1.0)
-            raw_col = oni_initial_color * (1 - tcol) + oni_target_color * tcol
-            new_col = vector(
-                max(0.0, min(1.0, raw_col.x)),
-                max(0.0, min(1.0, raw_col.y)),
-                max(0.0, min(1.0, raw_col.z))
-            )
-            ag.body.color = new_col
-            for ld3, ld2, _ in ag.leds:
-                ld3.color = ld2.color = new_col
-            ag.current_color = new_col
+    #         # Z の“押し返し”
+    #         z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
+    #                         ag.j*waveScale + sim_time*0.3)
+    #         ag.z = flow_target_height + z_wave*0.8  # 30 cm 振幅
 
-            if md < 2.0 or ag.z <= 1.25 + 1e-3:
-                oni_wait_start    = sim_time
-                oni_wait_duration = random.uniform(2.0, 6.0)
-                oni_state         = "waiting"
+    #         update_geometry(ag)
 
-        elif oni_state == "waiting":
-            ag = agents[oni_current_idx]
-            # 近づいてきた人がいればターゲット更新
-            closest = None
-            md = 2.0
-            for p in audiences:
-                d = math.hypot(p.x-ag.x, p.y-ag.y)
-                if d < md:
-                    md = d
-                    closest = p
-            if closest:
-                oni_target_aud = closest
-
-            update_geometry(ag)
-            # 常に観客を向く
-            dx, dy = oni_target_aud.x - ag.x, oni_target_aud.y - ag.y
-            dz     = oni_target_aud.height - ag.z
-            ag.yaw   = math.degrees(math.atan2(dy, dx))
-            ag.pitch = max(-60, min(60,
-                math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-            ))
-
-            # 待機解除→上昇時の色戻しイージング初期化
-            if md < 2.0 or sim_time - oni_wait_start >= oni_wait_duration:
-                oni_state               = "ascending"
-                oni_return_start        = sim_time
-                oni_return_start_color  = ag.current_color
-                update_geometry(ag)
-                ag.set_leds()
-                oni_return_end_color    = ag.current_color
-
-        elif oni_state == "ascending":
-            ag = agents[oni_current_idx]
-            # 近づいてきた人がいればターゲット更新
-            closest = None
-            md = 2.0
-            for p in audiences:
-                d = math.hypot(p.x-ag.x, p.y-ag.y)
-                if d < md:
-                    md = d
-                    closest = p
-            if closest:
-                oni_target_aud = closest
-
-            # 高さ更新、速度倍速
-            sp = (oni_return_speed * 2
-                  if any(math.hypot(p.x-ag.x, p.y-ag.y) < 2 for p in audiences)
-                  else (oni_descent_speed * 2))
-            ag.z = min(maxZ, ag.z + sp * dt)
-            update_geometry(ag)
-
-            # 常に観客を向く
-            dx, dy = oni_target_aud.x - ag.x, oni_target_aud.y - ag.y
-            dz     = oni_target_aud.height - ag.z
-            ag.yaw   = math.degrees(math.atan2(dy, dx))
-            ag.pitch = max(-60, min(60,
-                math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-            ))
-
-            # 色戻しイージング（1秒＋ノージング）
-            tback = min((sim_time - oni_return_start) / 1.0, 1.0)
-            noise = random.uniform(-0.05, 0.05) * (1 - tback)
-            raw_back = oni_return_start_color * (1 - tback) + oni_return_end_color * tback
-            back_col = vector(
-                max(0.0, min(1.0, raw_back.x + noise)),
-                max(0.0, min(1.0, raw_back.y + noise)),
-                max(0.0, min(1.0, raw_back.z + noise))
-            )
-            ag.body.color = back_col
-            for ld3, ld2, _ in ag.leds:
-                ld3.color = ld2.color = back_col
-            ag.current_color = back_col
-
-            if ag.z >= maxZ - 1e-3:
-                # 前の上昇開始時刻から 2~8秒 のランダム待機
-                oni_next_time    = oni_return_start + random.uniform(1.0, 4.0)
-                oni_current_idx  = None
-                oni_target_aud   = None
-                oni_state        = "idle"
-
-        # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
-        for ag in agents:
-            ag.display()
-            ag.set_leds()
-            send_queue.put(ag)
-
-
-
-
+    #         # LED のきらめき
+    #         hue = (0.55 + steer.x*0.15) % 1.0        # 青緑系中心
+    #         flick = 0.7 + 0.3*math.sin(sim_time*10 + phase)
+    #         r,g,b = colorsys.hsv_to_rgb(hue, 0.8, flick)
+    #         col   = vector(r,g,b)
+    #         ag.current_color = col
+            
+            
+    #     # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
+    #     for ag in agents:
+    #         ag.display()
+    #         for ld3, ld2, _ in ag.leds:
+    #             ld3.color = ld2.color = ag.current_color   # ← ここを修正
+    #         send_queue.put(ag)
     elif mode_menu.selected == "魚群モード":
-        # 0) 流れベクトル（逆向き）を先に求める
+        # ========================================================
+        # 魚群モードの初期化とトランジション
+        # ========================================================
+        
+        # グローバルなprev_modeの確認（デバッグ用）
+        current_prev_mode = getattr(mode_menu, 'global_prev_mode', None)
+        
+        # モード切り替え検出（より確実な方法）
+        if not hasattr(mode_menu, 'fish_mode_initialized') or not mode_menu.fish_mode_initialized:
+            print(f"[魚群モード] 初期化開始 (前のモード: {current_prev_mode})")
+            mode_menu.fish_mode_initialized = True
+            mode_menu.fish_transition_start = sim_time
+            mode_menu.fish_transition_duration = 2.0  # 2秒のトランジション
+            
+            # 各エージェントの開始状態を保存
+            for ag in agents:
+                # 現在の状態を確実に保存
+                ag.fish_start_z = ag.z
+                ag.fish_start_yaw = ag.yaw
+                ag.fish_start_pitch = ag.pitch
+                ag.fish_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
+                
+                # ダウンライトの状態も保存
+                ag.fish_start_downlight = getattr(ag, 'downlight_brightness', 0.0)
+                
+                # きらめき用の初期化
+                ag.fish_flicker_phase = random.random() * 2 * math.pi  # 位相をランダム化
+                ag.fish_flicker_frequency = 0.1  # 初期は低周波（ゆっくり）
+                
+                # 目標値を設定
+                ag.fish_target_z = 2.0  # 基準高さ
+                ag.fish_target_pitch = 0.0  # 水平
+                ag.fish_target_color = vector(0.0, 0.7, 0.8)  # 青緑系の初期色
+                
+                print(f"  Agent {ag.node_id}: z={ag.fish_start_z:.2f}→{ag.fish_target_z}, "
+                    f"pitch={ag.fish_start_pitch:.1f}→{ag.fish_target_pitch}")
+        
+        # 他のモードから切り替わった時のフラグリセット
+        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "魚群モード":
+            # 他のモードの初期化フラグをリセット
+            mode_menu.shimmer_initialized = False
+            mode_menu.tenge_initialized = False
+            mode_menu.ceiling_initialized = False
+            # 必要に応じて他のモードのフラグも追加
+        
+        # トランジション進行度を計算
+        transition_elapsed = sim_time - getattr(mode_menu, 'fish_transition_start', sim_time)
+        transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'fish_transition_duration', 2.0))
+        
+        # イージング関数（easeInOutCubic）
+        if transition_progress < 0.5:
+            eased_progress = 4 * transition_progress * transition_progress * transition_progress
+        else:
+            eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
+        
+        # トランジション中かどうか
+        in_transition = transition_progress < 1.0
+        
+        # ========================================================
+        # 流れベクトルの計算（トランジション中も必要）
+        # ========================================================
         flow_vecs = []
         for ag in agents:
             fx = pnoise2(ag.i*noiseScale + noise_time,
@@ -2195,20 +2271,23 @@ while True:
             v = vector(-fx, -fy, 0).norm()  # 逆向き
             flow_vecs.append(v)
 
-        # 1) Boids in XY 平面
+        # ========================================================
+        # 各エージェントの更新
+        # ========================================================
         for idx, ag in enumerate(agents):
+            # Boids計算（トランジション中も行う）
             sep = coh = align = vector(0,0,0)
             cnt = 0
             for jdx in ag.neighbors:
-                if 0 <= jdx < len(agents):     # ★ガードを追加★
+                if 0 <= jdx < len(agents):
                     nb = agents[jdx]
-                    dxy   = vector(nb.x - ag.x, nb.y - ag.y, 0)
-                    dist  = dxy.mag
+                    dxy = vector(nb.x - ag.x, nb.y - ag.y, 0)
+                    dist = dxy.mag
                     if dist < fish_sep_dist:
                         sep -= dxy / (dist**2 + 1e-3)
-                    coh   += dxy
+                    coh += dxy
                     align += flow_vecs[jdx]
-                    cnt   += 1
+                    cnt += 1
 
             if cnt:
                 coh /= cnt
@@ -2219,54 +2298,195 @@ while True:
                     align * fish_align_factor +
                     flow_vecs[idx])
 
-            # 目標方向 → yaw/pitch
+            # 目標方向
             steer = steer.norm()
-            tgt_yaw   = math.degrees(math.atan2(steer.y, steer.x))
+            tgt_yaw = math.degrees(math.atan2(steer.y, steer.x))
             tgt_pitch = 0  # 水平泳ぎ
 
             # 尾びれオシレータ
-            phase = ag.idx * 0.7  # 個体差
-            osc   = fin_osc_amp_deg * math.sin(2*math.pi*fin_osc_freq_hz*sim_time + phase)
+            phase = ag.idx * 0.7
+            osc = fin_osc_amp_deg * math.sin(2*math.pi*fin_osc_freq_hz*sim_time + phase)
+            
+            # トランジション中は振幅を抑える
+            if in_transition:
+                osc *= eased_progress
+            
             tgt_yaw += osc
 
-            # イージング
-            k = min(1.0, ease_speed * dt)
-            dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
-            ag.yaw   += dyaw   * k
-            ag.pitch += (tgt_pitch - ag.pitch) * k
+            # ========================================================
+            # 位置・姿勢の更新（トランジション処理込み）
+            # ========================================================
+            
+            if in_transition:
+                # Z座標のトランジション（確実に開始値から目標値へ）
+                ag.z = ag.fish_start_z + (ag.fish_target_z - ag.fish_start_z) * eased_progress
+                
+                # Pitchのトランジション（確実に開始値から目標値へ）
+                ag.pitch = ag.fish_start_pitch + (ag.fish_target_pitch - ag.fish_start_pitch) * eased_progress
+                
+                # Yawのトランジション（目標方向に向かって徐々に調整）
+                dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+                # トランジション中は回転速度を調整
+                k = min(1.0, ease_speed * dt * eased_progress)
+                ag.yaw += dyaw * k
+                
+                # 色のトランジション（確実に開始色から目標色へ）
+                base_color = vector(
+                    ag.fish_start_color.x + (ag.fish_target_color.x - ag.fish_start_color.x) * eased_progress,
+                    ag.fish_start_color.y + (ag.fish_target_color.y - ag.fish_start_color.y) * eased_progress,
+                    ag.fish_start_color.z + (ag.fish_target_color.z - ag.fish_start_color.z) * eased_progress
+                )
+            else:
+                # 通常のイージング
+                k = min(1.0, ease_speed * dt)
+                dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * k
+                ag.pitch += (tgt_pitch - ag.pitch) * k
+                
+                # 基本色
+                base_color = ag.fish_target_color
 
-            # Z の“押し返し”
+            # ========================================================
+            # Z座標の波動（人を避ける動作）
+            # ========================================================
             z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
                             ag.j*waveScale + sim_time*0.3)
-            ag.z = flow_target_height + z_wave*0.3   # 30 cm 振幅
+            
+            # 人との距離に基づいて振幅と中心高さを計算
+            min_amplitude = 0.25
+            max_amplitude = 0.4
+            avoid_radius = 1.5
+            
+            base_height_with_person = 2.5
+            base_height_without_person = 2.0
+            
+            # 各観客からの影響を計算
+            amplitude_factor = 1.0
+            height_factor = 1.0
+            
+            for person in audiences:
+                dist = math.hypot(person.x - ag.x, person.y - ag.y)
+                
+                if dist < avoid_radius:
+                    t = dist / avoid_radius
+                    smooth_t = t * t * (3 - 2 * t)
+                    person_factor = smooth_t
+                    amplitude_factor = min(amplitude_factor, person_factor)
+                    height_factor = min(height_factor, person_factor)
+            
+            # 最終的な振幅を計算（トランジション中は徐々に増加）
+            wave_amplitude = min_amplitude + (max_amplitude - min_amplitude) * amplitude_factor
+            if in_transition:
+                wave_amplitude *= eased_progress
+            
+            # 基準高さを計算
+            current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1 - height_factor)
+            
+            # トランジション完了後のみ波動を適用
+            if not in_transition:
+                ag.z = current_base_height + z_wave * wave_amplitude
+            else:
+                # トランジション中は波動効果を徐々に適用
+                wave_effect = z_wave * wave_amplitude * eased_progress
+                target_with_wave = ag.fish_target_z + wave_effect
+                ag.z = ag.fish_start_z + (target_with_wave - ag.fish_start_z) * eased_progress
+            
+            # 高さの制限
+            ag.z = max(minZ, min(maxZ, ag.z))
 
+            # ジオメトリ更新
             update_geometry(ag)
 
-            # LED のきらめき
-            hue = (0.55 + steer.x*0.15) % 1.0        # 青緑系中心
-            flick = 0.7 + 0.3*math.sin(sim_time*10 + phase)
-            r,g,b = colorsys.hsv_to_rgb(hue, 0.8, flick)
-            col   = vector(r,g,b)
-            ag.current_color = col
+            # ========================================================
+            # LED色のきらめき（徐々に周波数を上げる）
+            # ========================================================
             
+            # きらめきの周波数を徐々に上げる
+            if in_transition:
+                # 0.1Hz（ゆっくり）から10Hz（速い）へ
+                target_frequency = 10.0
+                ag.fish_flicker_frequency = 0.1 + (target_frequency - 0.1) * eased_progress
+                
+                # 色相の変化幅も徐々に増やす
+                hue_variation = 0.02 + 0.13 * eased_progress  # 0.02→0.15
+                brightness_variation = 0.05 + 0.25 * eased_progress  # 0.05→0.3
+            else:
+                ag.fish_flicker_frequency = 10.0
+                hue_variation = 0.15
+                brightness_variation = 0.3
             
-        # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
+            # きらめきの計算（各エージェントの位相を使用）
+            hue = (0.55 + steer.x * hue_variation) % 1.0
+            flick = 0.7 + brightness_variation * math.sin(ag.fish_flicker_frequency * sim_time + ag.fish_flicker_phase)
+            
+            # 明度を制限（暗くなりすぎない）
+            flick = max(0.5, min(1.0, flick))
+            
+            r, g, b = colorsys.hsv_to_rgb(hue, 0.8, flick)
+            flicker_color = vector(r, g, b)
+            
+            # トランジション中は基本色ときらめき色をブレンド
+            if in_transition:
+                # きらめきの影響を徐々に強くする
+                blend_factor = eased_progress * 0.7  # 最大70%までブレンド
+                final_color = base_color * (1 - blend_factor) + flicker_color * blend_factor
+            else:
+                final_color = flicker_color
+            
+            ag.current_color = final_color
+            
+            # ========================================================
+            # ダウンライトのランダムきらめき
+            # ========================================================
+            if not hasattr(ag, 'downlight_flicker_time'):
+                ag.downlight_flicker_time = -999.0
+                ag.downlight_base = 0.0
+            
+            flicker_duration = 0.5
+            
+            # トランジション中はきらめきを抑制
+            trigger_probability = 0.017 if not in_transition else 0.017 * eased_progress
+            
+            if random.random() < trigger_probability:
+                ag.downlight_flicker_time = sim_time
+            
+            flicker_age = sim_time - ag.downlight_flicker_time
+            if 0 <= flicker_age <= flicker_duration:
+                t = flicker_age / flicker_duration
+                intensity = math.sin(t * math.pi)
+                max_intensity = 0.3 if not in_transition else 0.3 * eased_progress
+                ag.downlight_brightness = intensity * max_intensity
+            else:
+                # トランジション中は徐々に消灯
+                if in_transition:
+                    ag.downlight_brightness = ag.fish_start_downlight * (1 - eased_progress)
+                else:
+                    ag.downlight_brightness = 0.0
+            
+            # ダウンライト表示更新
+            update_downlight_display(ag)
+        
+        # ========================================================
+        # 描画・LED・MQTT出力
+        # ========================================================
         for ag in agents:
             ag.display()
+            ag.body.color = ag.current_color
             for ld3, ld2, _ in ag.leds:
-                ld3.color = ld2.color = ag.current_color   # ← ここを修正
+                ld3.color = ld2.color = ag.current_color
             send_queue.put(ag)
-
-
+        
+        # 現在のモードを記録（メインループの最後で更新される想定）
+        # mode_menu.global_prev_mode = "魚群モード"
     # ------------------------------------------------------------
     elif mode_menu.selected == "蜂シマーモード":
     # ------------------------------------------------------------
-        # --- 1) 各種パラメータ（すでにあるので省略） ---
+        # --- 1) 各種パラメータ（先に定義） ---
         shim_base_freq_hz = 1.0
         shim_base_amp_m   = 0.005
         shim_wave_speed   = 1.2
         shim_trigger_mean = 3.0
-        shim_front_tol    = 0.35    # このパラメータは使わなくなるかもしれません
+        shim_front_tol    = 0.35
 
         yaw_peak_deg  = 90.0
         yaw_rise_s    = 0.5
@@ -2277,18 +2497,107 @@ while True:
         drop_up_s_n   = 1.0
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
-        rare_prob     = 0.002
+        rare_prob     = 0.02 # was 0.002
         rare_factor   = 6
         drop_m_rare   = drop_m_norm * rare_factor
         drop_down_s_r = drop_down_s_n * rare_factor
         drop_up_s_r   = drop_up_s_n   * rare_factor
         drop_total_r  = drop_down_s_r + drop_up_s_r
-
+        
+        # 逃げ判定を行う時間窓（レアドロップ開始から何秒まで？）
+        escape_window_s = 10.0      # ← レアドロップ全期間をカバーするように延長
+        escape_radius = 2.0         # 逃げる判定半径
+        
         color_rise_s   = 0.5
         flash_rise_s   = 0.2
         flash_decay_s  = 1.5
         white_mix_peak = 0.5
         bright_peak    = 0.5
+        
+        # ★追加：モード開始時の初期化チェック
+        if not hasattr(mode_menu, 'shimmer_initialized'):
+            mode_menu.shimmer_initialized = True
+            mode_menu.shimmer_reset_start = sim_time
+            mode_menu.shimmer_reset_duration = 1.0  # 1秒かけて正位置に戻す
+            
+            # 各エージェントの現在位置を記憶
+            for ag in agents:
+                ag.shimmer_start_z = ag.z
+                ag.shimmer_start_yaw = ag.yaw
+                ag.shimmer_start_pitch = ag.pitch
+                # デフォルトの正位置を設定（z=2.5, yaw=各自の初期値, pitch=0）
+                ag.shimmer_default_z = 2.5  # または flow_target_height
+                ag.shimmer_default_pitch = 0.0
+                
+                # シマーモード用の初期化も同時に行う
+                ag.yaw0 = ag.yaw
+                ag.z0 = ag.shimmer_default_z  # 正位置をベースに
+                ag.face_dir = ag.yaw0
+                ag.actual_face_dir = ag.yaw0  # ★追加：実際の向き
+                ag.kick_time = ag.drop_time = ag.color_t0 = -999.0
+                ag.kick_peak = 0.0
+                ag.drop_mode = "norm"
+                ag.current_color = vector(0.5, 0.5, 0.0)
+                ag.color_from = ag.color_to = ag.current_color
+                ag.drop_down_s = drop_down_s_n
+                ag.drop_up_s = drop_up_s_n
+                ag.drop_total = drop_total_n
+                ag.drop_m = drop_m_norm
+        
+        # 他のモードから切り替わった時のフラグリセット
+        if not hasattr(mode_menu, 'prev_mode'):
+            mode_menu.prev_mode = mode_menu.selected
+        elif mode_menu.prev_mode != mode_menu.selected:
+            mode_menu.shimmer_initialized = False
+            mode_menu.prev_mode = mode_menu.selected
+            # 波イベントもクリア
+            wave_events.clear()
+            next_shim_time = sim_time + 1.5  # リセット後に波を開始
+        
+        # ★位置リセット処理（最初の1秒間）
+        reset_elapsed = sim_time - getattr(mode_menu, 'shimmer_reset_start', 0)
+        if reset_elapsed < getattr(mode_menu, 'shimmer_reset_duration', 0):
+            # イージング係数（0→1）
+            t = reset_elapsed / mode_menu.shimmer_reset_duration
+            # easeInOutCubic
+            if t < 0.5:
+                ease_t = 4 * t * t * t
+            else:
+                ease_t = 1 - pow(-2 * t + 2, 3) / 2
+            
+            # 各エージェントを正位置へ移動
+            for ag in agents:
+                # 位置の補間
+                ag.z = ag.shimmer_start_z + (ag.shimmer_default_z - ag.shimmer_start_z) * ease_t
+                ag.pitch = ag.shimmer_start_pitch + (ag.shimmer_default_pitch - ag.shimmer_start_pitch) * ease_t
+                # yawは維持（または必要に応じて調整）
+                
+                # ジオメトリ更新
+                update_geometry(ag)
+                
+                # この間は波動を発生させない
+                ag.z0 = ag.z  # 現在位置をベースラインに
+            
+            # リセット中は波を発生させない
+            next_shim_time = sim_time + mode_menu.shimmer_reset_duration + 0.5
+            
+            # 色も徐々にシマーモードの初期色へ
+            for ag in agents:
+                shimmer_base_color = vector(0.5, 0.5, 0.0)
+                ag.current_color = ag.current_color * (1 - ease_t) + shimmer_base_color * ease_t
+                ag.body.color = ag.current_color
+                for ld3, ld2, _ in ag.leds:
+                    ld3.color = ld2.color = ag.current_color
+            
+            # MQTT送信
+            for ag in agents:
+                ag.display()
+                send_queue.put(ag)
+            
+            # リセット中は以降の処理をスキップ
+            continue
+        
+        # ★以下、既存のシマーモード処理（パラメータ定義は上に移動済み）
 
         # --- 2) 波発生の部分も修正 ---
         if sim_time >= next_shim_time:
@@ -2307,7 +2616,6 @@ while True:
                 dist = math.hypot(ag.x - ori.x, ag.y - ori.y)
 
                 # 正確な到達時刻
-                # shim_wave_speed = 1.2 なので、距離1mで約0.83秒の差
                 t_trigger = sim_time + dist / shim_wave_speed
 
                 # 同一距離上のノードが完全同時に鳴らないように小さな乱数を足す（既存）
@@ -2315,8 +2623,6 @@ while True:
                 t_trigger += jitter
                 
                 # 新規：順序が入れ替わるほどの大きなランダム遅延
-                # 0～1.5秒のランダム遅延（波速度1.2m/sなら約1.8m分の距離差に相当）
-                # 震源近くは遅延を小さく、遠くは大きく
                 if dist < 2.0:  # 震源近く（2m以内）
                     random_delay = random.uniform(0, 0.5)
                 elif dist < 5.0:  # 中距離（2-5m）
@@ -2341,7 +2647,7 @@ while True:
             # 次の波を発生させるタイミングを決定
             next_shim_time = sim_time + random.expovariate(1/shim_trigger_mean)
 
-        # --- 3) 各ノードの共通更新処理（「波ヒット判定」はここから外す） ---
+        # --- 3) 各ノードの共通更新処理 ---
         for ag in agents:
             # z_off のベース（サイン波で上下振動）
             z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7) * shim_base_amp_m
@@ -2351,6 +2657,7 @@ while True:
                 ag.yaw0       = ag.yaw
                 ag.z0         = ag.z
                 ag.face_dir   = ag.yaw0
+                ag.actual_face_dir = ag.yaw0  # ★追加
                 ag.kick_time  = ag.drop_time = ag.color_t0 = -999.0
                 ag.kick_peak  = 0.0
                 ag.drop_mode  = "norm"
@@ -2371,27 +2678,138 @@ while True:
                 wave_hit_allowed = True
                 ag.drop_mode = "norm"  # レア期間を過ぎたら通常に戻す
 
-            # (3) ── 『波判定』をここから外し、wave_events でまとめて処理する ──  
+            # ★(3) 観客検出と自律モード判定
+            closest = None
+            min_dist = float('inf')
+            
+            # レアドロップ中は距離制限なしで最も近い観客を探す
+            if ag.drop_mode == "rare":
+                for p in audiences:
+                    d = math.hypot(p.x - ag.x, p.y - ag.y)
+                    if d < min_dist:
+                        min_dist = d
+                        closest = p
+            else:
+                # 通常時は検出半径内の観客を探す
+                for p in audiences:
+                    d = math.hypot(p.x - ag.x, p.y - ag.y)
+                    if d < detect_radius and d < min_dist:
+                        min_dist = d
+                        closest = p
+            
+            # 目標方向の計算
+            if closest:
+                dx, dy = closest.x - ag.x, closest.y - ag.y
+                dz = closest.height - ag.z
+                target_yaw = math.degrees(math.atan2(dy, dx))
+                target_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+                target_pitch = max(-60, min(60, target_pitch))
+                
+                # 自律モードの判定
+                yaw_diff = abs(((target_yaw - ag.actual_face_dir + 540) % 360) - 180)
+                if ag.drop_mode == "rare":
+                    # レアドロップ時は常に自律モード
+                    ag.autonomous_mode = True
+                elif min_dist < 1.5 and yaw_diff < 30:
+                    # 通常時は1.5m以内かつ正面向きで自律モード
+                    ag.autonomous_mode = True
+                else:
+                    ag.autonomous_mode = False
+            else:
+                # 観客がいない場合
+                ag.autonomous_mode = False
+                target_yaw = ag.actual_face_dir  # ★修正：face_dirではなくactual_face_dirを使用
+                target_pitch = 0
 
-            # ── 回転処理 ─────────────────────────────────────────────────────
-            k_age    = sim_time - ag.kick_time
+            # ★(4) 回転処理（修正版）
+            k_age = sim_time - ag.kick_time
+            
+            # 波のキックによる回転
             yaw_kick = (0 if k_age < 0 else
                         yaw_peak_deg * k_age / yaw_rise_s if k_age <= yaw_rise_s else
                         yaw_peak_deg * math.exp(-(k_age - yaw_rise_s) / yaw_decay_tau))
-            desired_yaw = ag.face_dir + yaw_kick
-            dyaw = ((desired_yaw - ag.yaw + 540) % 360) - 180
-            ag.yaw += dyaw * 0.1
-
-            # ── ドロップ処理 ─────────────────────────────────────────────────
-            d_age = sim_time - ag.drop_time
-            if d_age < 0:
-                drop_off = 0
-            elif d_age <= ag.drop_down_s:
-                drop_off = -ag.drop_m * (d_age / ag.drop_down_s)
-            elif d_age <= ag.drop_total:
-                drop_off = -ag.drop_m * (1 - (d_age - ag.drop_down_s) / ag.drop_up_s)
+            
+            # 観客がいる場合はイージングで向きを変える
+            if closest:
+                # 観客への方向にイージング
+                dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                ease_factor = 0.1
+                if ag.drop_mode == "rare":
+                    ease_factor = 0.15  # レアドロップ時は少し速く反応
+                ag.yaw += dyaw * ease_factor
+                ag.actual_face_dir = ag.yaw  # ★実際の向きを更新
+                
+                # Pitchもイージング
+                dpitch = target_pitch - ag.pitch
+                ag.pitch += dpitch * ease_factor
             else:
-                drop_off = 0
+                # 観客がいない場合は actual_face_dir に波のキックを加える
+                desired_yaw = ag.actual_face_dir + yaw_kick
+                dyaw = ((desired_yaw - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * 0.1
+                # actual_face_dirは波の影響を受けて徐々に更新
+                if abs(yaw_kick) > 1:  # 波のキックが有効な時のみ更新
+                    ag.actual_face_dir += yaw_kick * 0.02  # ゆっくり更新
+                ag.pitch = 0  # または維持
+            
+            # actual_pitchを更新
+            ag.actual_pitch = ag.pitch
+
+            # ★(5) 自律モードのビジュアル更新
+            ag.update_autonomous_indicator()
+
+            # ── ドロップ処理（改良版：鬼さんこちら） ─────────────────────────────────────────────────
+            d_age = sim_time - ag.drop_time
+            
+            # ★ レアドロップ時の特別な処理
+            if ag.drop_mode == "rare":
+                # 最新の距離を計算
+                current_dist = float('inf')
+                if closest:  # closestは上で計算済み
+                    current_dist = min_dist
+                
+                # 逃げ判定と速度調整
+                escape_active = False
+                if current_dist < escape_radius and d_age < drop_total_r:
+                    escape_active = True
+                    # 下降中に人が近づいた → 即座に上昇フェーズへ
+                    if d_age < ag.drop_down_s:
+                        ag.drop_time = sim_time - ag.drop_down_s
+                        d_age = ag.drop_down_s
+                        print(f"鬼さん逃げる! ID {ag.node_id}, 距離: {current_dist:.1f}m")
+                
+                # ドロップ計算
+                if d_age < 0:
+                    drop_off = 0
+                elif d_age <= ag.drop_down_s:
+                    # 下降フェーズ
+                    drop_off = -ag.drop_m * (d_age / ag.drop_down_s)
+                elif d_age <= ag.drop_total:
+                    # 上昇フェーズ
+                    progress = (d_age - ag.drop_down_s) / ag.drop_up_s
+                    
+                    # 逃げモード時は速度を上げる
+                    if escape_active:
+                        # 2〜3倍速で上昇
+                        speed_factor = 2.0 + (escape_radius - current_dist) / escape_radius
+                        progress = min(1.0, progress * speed_factor)
+                    
+                    drop_off = -ag.drop_m * (1 - progress)
+                else:
+                    drop_off = 0
+                    # レアドロップ終了
+                    ag.drop_mode = "norm"
+                    ag.autonomous_mode = False
+            else:
+                # 通常のドロップ処理
+                if d_age < 0:
+                    drop_off = 0
+                elif d_age <= ag.drop_down_s:
+                    drop_off = -ag.drop_m * (d_age / ag.drop_down_s)
+                elif d_age <= ag.drop_total:
+                    drop_off = -ag.drop_m * (1 - (d_age - ag.drop_down_s) / ag.drop_up_s)
+                else:
+                    drop_off = 0
 
             # ── 色のベース計算 ─────────────────────────────────────────────
             if sim_time - ag.color_t0 < color_rise_s:
@@ -2423,14 +2841,11 @@ while True:
                         z_off *= 2
                         break
 
-            # ── 各エージェントの最終的な z 座標 / pitch / 表示更新 ──────────────
-            ag.z     = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
-            ag.pitch = 0
+            # ── 各エージェントの最終的な z 座標 / 表示更新 ──────────────
+            ag.z = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
             update_geometry(ag)
             for l3, l2, _ in ag.leds:
                 l3.color = l2.color = ag.current_color
-
-
 
         # --- 4) wave_events をチェックして、『sim_time >= t_trigger』のイベントだけを順次発火する ---
         new_wave_events = []
@@ -2438,11 +2853,18 @@ while True:
             remaining = []
             for (t_trigger, ag, wcol, wdir) in wave['events']:
                 if sim_time >= t_trigger:
+                    # ★ レアドロップ中かチェック
+                    if ag.drop_mode == "rare" and sim_time - ag.drop_time < drop_total_r:
+                        # レアドロップ中は波を無視
+                        remaining.append((t_trigger, ag, wcol, wdir))
+                        continue
+                    
                     # (a) ── 波にぶつかった瞬間の処理 ───────────────────────────
                     
                     # レアドロップの判定を追加
-                    if random.random() < rare_prob:  # 0.002 = 0.2%の確率
+                    if random.random() < rare_prob:  # 0.02 = 2%の確率
                         ag.drop_mode = "rare"
+                        ag.escape_triggered = False  # リセット
                         ag.drop_m = drop_m_rare       # 通常の6倍の深さ
                         ag.drop_down_s = drop_down_s_r # 通常の6倍の時間
                         ag.drop_up_s = drop_up_s_r     # 通常の6倍の時間
@@ -2470,10 +2892,6 @@ while True:
                         "/shim",
                         [int(wave['origin_id']), atk, rel, fAtk, vibRate, vibDepth, amp, distance]
                     )
-                    # osc_client_max.send_message(
-                    #     "/shim",
-                    #     [int(wave['origin_id']), atk, rel, fAtk, vibRate, vibDepth, amp, distance]
-                    # )
 
                     # z_off を強制的に大きくして跳ね上げ
                     ag.z = clamp(ag.z + shim_base_amp_m * 4, minZ, maxZ)
@@ -2482,7 +2900,10 @@ while True:
                     ag.kick_time = sim_time
                     ag.kick_peak = yaw_peak_deg
                     ag.drop_time = sim_time
-                    ag.face_dir = wdir
+                    ag.face_dir = wdir  # ★注意：face_dirは波の方向を保持（参考値）
+                    # actual_face_dirは観客がいる時は更新しない
+                    if not closest:
+                        ag.actual_face_dir = wdir
                     ag.color_from = ag.current_color
                     ag.color_to = wcol * 0.5
                     ag.color_t0 = sim_time
@@ -2508,20 +2929,12 @@ while True:
                 brightness = max(ag.current_color.x,
                                 ag.current_color.y,
                                 ag.current_color.z)
-                # node_id は CSV の id 列が文字列なら int() で数値化
-                # osc_client.send_message(
-                #     "/shim",
-                #     [int(ag.node_id),          # ① ID
-                #     round(ag.z, 3),           # ② 高さ [m]  例: 1.732
-                #     round(brightness, 3)] )   # ③ 明るさ (0.0-1.0)
             send_queue.put(ag)
 
-
-        # 2) 古い波 8 s で削除
+        # 2) 古い波 8 s で削除
         wave_fronts[:] = [(x,y,t,c,d) for (x,y,t,c,d) in wave_fronts
-                          if sim_time - t < 8]
+                        if sim_time - t < 8]
     # ------------------------------------------------------------
-    
     # メインループの既存のelif文の後に追加：
     elif mode_menu.selected == "マニュアルモード":
         # マニュアルモードの処理
@@ -2553,3 +2966,22 @@ while True:
             # 2) 実体をリストから外す  ←★追加★
             sensor_people.clear()
             audiences.clear()          # audiences は検出ループで使われる
+
+    # 各モード処理の後、メインループの最後に
+    mode_menu.global_prev_mode = mode_menu.selected
+
+    # モード変更時のフラグリセット（on_mode_select関数内に追加）
+    if mode_menu.selected != "回る天井":
+        mode_menu.ceiling_mode_initialized = False
+
+    if mode_menu.selected != "魚群モード":
+        mode_menu.fish_mode_initialized = False
+        mode_menu.fish_reset_start = 0.0
+        mode_menu.fish_reset_duration = 1.0
+
+    if mode_menu.selected != "蜂シマーモード":
+        # シマーモードの初期化フラグをリセット
+        mode_menu.shimmer_initialized = False
+    
+    if mode_menu.selected != "天上天下モード":
+        mode_menu.tenge_initialized = False

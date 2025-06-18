@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 1541.0, -87.0, 408.0, 840.0 ],
+		"rect" : [ 217.0, 229.0, 1150.0, 647.0 ],
 		"bglocked" : 0,
 		"openinpresentation" : 1,
 		"default_fontsize" : 12.0,
@@ -1240,7 +1240,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 679.0, 183.0, 50.0, 22.0 ],
-					"text" : "2"
+					"text" : "0"
 				}
 
 			}
@@ -1690,10 +1690,10 @@
 					"maxclass" : "comment",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 8.0, 393.0, 127.0, 20.0 ],
+					"patching_rect" : [ 8.0, 393.0, 223.0, 20.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 8.0, 107.0, 141.0, 20.0 ],
-					"text" : "回る天井パラメータ"
+					"presentation_rect" : [ 8.0, 107.0, 188.0, 20.0 ],
+					"text" : "インタラクティブ・パラメータ"
 				}
 
 			}
@@ -1746,7 +1746,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 213.0, 15.0, 570.0, 22.0 ],
-					"text" : "clear, append マニュアルモード, append 天上天下モード, append 回る天井, append 魚群, append シマー"
+					"text" : "clear, append マニュアルモード, append 魚群, append シマー, append 天上天下モード, append 回る天井"
 				}
 
 			}
