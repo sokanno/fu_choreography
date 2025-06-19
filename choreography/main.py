@@ -1640,16 +1640,16 @@ while True:
                 shadow_wave = {
                     'start_pos': vector(start_x, start_y, 0),
                     'direction': direction,
-                    'speed': random.uniform(3.0, 6.0), # was  (1.5, 3.0)
-                    'width': random.uniform(1.5, 6.0),
-                    'intensity': random.uniform(0.7, 0.9),  # 強度を上げる
+                    'speed': random.uniform(5.0, 10.0), # was  (1.5, 3.0)
+                    'width': random.uniform(3.0, 6.0),
+                    'intensity': random.uniform(1.0, 2.0),  # 強度を上げる(0.5, 0.8),  # 強度を上げる
                     'start_time': sim_time,
                     'duration': 15.0  # 15秒で消える
                 }
                 mode_menu.shadow_waves.append(shadow_wave)
                 
                 # 次の影の発生時刻
-                mode_menu.next_shadow_time = sim_time + random.uniform(5.0, 12.0)
+                mode_menu.next_shadow_time = sim_time + random.uniform(5.0, 10.0)
                 print(f"[影の波] 発生 from {edge_choice}, intensity={shadow_wave['intensity']:.2f}, "
                       f"width={shadow_wave['width']:.1f}, speed={shadow_wave['speed']:.1f}")
             
