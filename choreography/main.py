@@ -174,15 +174,6 @@ fin_osc_amp_deg    = 4.0    # 尾びれ振幅 (deg)
 fin_osc_freq_hz    = 1.5    # 尾びれ周波数
 
 # ==== Shimmer mode params ====
-# ==== Shimmer mode params ====
-# shim_base_freq_hz  = 5.0          # 基本垂直振動 (Hz)
-# shim_base_amp_m    = 0.01         # 振幅 ±1 cm
-# shim_wave_speed    = 1.2          # 伝播速度 (m/s)
-# shim_trigger_mean  = 3.0          # ★ 平均トリガ間隔 [s]（以前 3s）
-# # shim_kick_pitch_deg = 6.0         # ★ ケツ振り横揺れ振幅 (deg)
-# # shim_kick_decay     = 0.6         # ★ 横揺れが0になるまでの減衰時間 [s]
-# shim_kick_yaw_deg   = 20.0   # ★ 水平回転の振幅 (deg)
-# shim_kick_decay     = 0.6    # 減衰時間 [s] （前回と同じで可）
 shim_base_freq_hz = 10.0      # 垂直バイブ＝ 10 Hz（以前 5 Hz）
 shim_base_amp_m   = 0.01      # ±1 cm
 shim_wave_speed   = 1.2       # m/s
@@ -399,15 +390,7 @@ class Agent:
             color=color.red,
             visible=False  # 初期は非表示
         )
-        # self.end_ring_back = ring(
-        #     canvas=scene3d,
-        #     pos=vector(x, y, z),
-        #     axis=self.compute_axis(),
-        #     radius=agent_radius * 1.2,
-        #     thickness=agent_radius * 0.2,
-        #     color=color.red,
-        #     visible=False
-        # )
+
         # 2Dビューでの自律モード表示（オプション）
         self.auto_indicator_2d = sphere(
             canvas=scene2d,
@@ -757,58 +740,6 @@ class Audience:
         )
         self.noise_t = random.random() * 1000  # 個体差をつけるオフセット
 
-    # def update(self, dt):
-    #     # 1) ノイズ時間を進める
-    #     self.noise_t += dt * audience_noise_speed
-
-    #     # 1.5) 速度変動（Perlinノイズ＋振幅パラメータ）
-    #     delta = pnoise1(self.noise_t * 0.5)  # -1..+1
-    #     self.current_speed = self.speed * (1 + audience_speed_amp * delta * 0.5)
-
-    #     # 2) 移動方向のノイズ取得
-    #     n = pnoise2(self.x * audience_noise_scale, self.noise_t)
-    #     angle = n * 2 * math.pi
-
-    #     # 3) 基本移動量
-    #     dx = math.cos(angle) * self.current_speed * dt
-    #     dy = math.sin(angle) * self.current_speed * dt
-
-    #     # 4) 壁反発：壁に近いほど跳ね返る成分を加える
-    #     margin_x = min(self.x - self.xmin, self.xmax - self.x)
-    #     margin_y = min(self.y - self.ymin, self.ymax - self.y)
-    #     threshold = self.radius * 2
-    #     if margin_x < threshold:
-    #         repel = (threshold - margin_x) / threshold
-    #         dx += repel * (-math.cos(angle)) * self.current_speed * dt
-    #     if margin_y < threshold:
-    #         repel = (threshold - margin_y) / threshold
-    #         dy += repel * (-math.sin(angle)) * self.current_speed * dt
-
-    #     # 5) 他の観客との衝突回避
-    #     min_sep = self.radius * 2
-    #     for other in audiences:
-    #         if other is self: continue
-    #         dist = math.hypot(self.x - other.x, self.y - other.y)
-    #         if dist < min_sep and dist > 1e-3:
-    #             # お互い離れるベクトルを加算
-    #             ux = (self.x - other.x) / dist
-    #             uy = (self.y - other.y) / dist
-    #             factor = (min_sep - dist) / min_sep
-    #             dx += ux * factor * self.current_speed * dt
-    #             dy += uy * factor * self.current_speed * dt
-
-    #     # 6) 移動量を反映＆クランプ
-    #     new_x = self.x + dx
-    #     new_y = self.y + dy
-    #     self.x = min(max(new_x, self.xmin), self.xmax)
-    #     self.y = min(max(new_y, self.ymin), self.ymax)
-
-    #     # 7) 3D 体幹・頭部更新
-    #     self.body.pos = vector(self.x, self.y, 0)
-    #     self.head.pos = vector(self.x, self.y, self.cyl_h + self.radius)
-
-    #     # 8) 2D ドット更新
-    #     self.dot2d.pos = vector(self.x, self.y, -0.1)
     def update(self, dt):
         # 1) ノイズ時間を進める
         self.noise_t += dt * audience_noise_speed
@@ -1644,6 +1575,10 @@ while True:
             if not hasattr(mode_menu, 'plane_angle_saved'):
                 mode_menu.plane_angle_saved = plane_angle
             
+            # ★影の波パラメータの初期化
+            mode_menu.shadow_waves = []  # 影の波のリスト
+            mode_menu.next_shadow_time = sim_time + random.uniform(3.0, 8.0)  # 次の影発生時刻
+            
             # 各エージェントの開始状態を保存
             for ag in agents:
                 ag.ceiling_start_z = ag.z
@@ -1653,6 +1588,9 @@ while True:
                 
                 # 自律モードの状態も保存
                 ag.ceiling_start_autonomous = getattr(ag, 'autonomous_mode', False)
+                
+                # 影エフェクト用の初期化
+                ag.shadow_factor = 0.0
                 
                 print(f"  Agent {ag.node_id}: z={ag.ceiling_start_z:.2f}, "
                       f"yaw={ag.ceiling_start_yaw:.1f}, pitch={ag.ceiling_start_pitch:.1f}")
@@ -1675,6 +1613,49 @@ while True:
         
         # トランジション中かどうか
         in_transition = transition_progress < 1.0
+        
+        # ★影の波の生成と更新（トランジション完了後のみ）
+        if not in_transition:
+            # 新しい影の波を生成
+            if sim_time >= mode_menu.next_shadow_time:
+                # 影の波の開始位置と方向を決定
+                edge_choice = random.choice(['left', 'right', 'top', 'bottom'])
+                if edge_choice == 'left':
+                    start_x = centerX - 10
+                    start_y = centerY + random.uniform(-5, 5)
+                    direction = vector(1, random.uniform(-0.3, 0.3), 0).norm()
+                elif edge_choice == 'right':
+                    start_x = centerX + 10
+                    start_y = centerY + random.uniform(-5, 5)
+                    direction = vector(-1, random.uniform(-0.3, 0.3), 0).norm()
+                elif edge_choice == 'top':
+                    start_x = centerX + random.uniform(-5, 5)
+                    start_y = centerY + 10
+                    direction = vector(random.uniform(-0.3, 0.3), -1, 0).norm()
+                else:  # bottom
+                    start_x = centerX + random.uniform(-5, 5)
+                    start_y = centerY - 10
+                    direction = vector(random.uniform(-0.3, 0.3), 1, 0).norm()
+                
+                shadow_wave = {
+                    'start_pos': vector(start_x, start_y, 0),
+                    'direction': direction,
+                    'speed': random.uniform(3.0, 6.0), # was  (1.5, 3.0)
+                    'width': random.uniform(1.5, 6.0),
+                    'intensity': random.uniform(0.7, 0.9),  # 強度を上げる
+                    'start_time': sim_time,
+                    'duration': 15.0  # 15秒で消える
+                }
+                mode_menu.shadow_waves.append(shadow_wave)
+                
+                # 次の影の発生時刻
+                mode_menu.next_shadow_time = sim_time + random.uniform(5.0, 12.0)
+                print(f"[影の波] 発生 from {edge_choice}, intensity={shadow_wave['intensity']:.2f}, "
+                      f"width={shadow_wave['width']:.1f}, speed={shadow_wave['speed']:.1f}")
+            
+            # 古い影の波を削除
+            mode_menu.shadow_waves = [w for w in mode_menu.shadow_waves 
+                                     if sim_time - w['start_time'] < w['duration']]
         
         # ========================================================
         # 傾斜面の計算
@@ -1791,6 +1772,65 @@ while True:
                                 ag.y + u.y*(agent_length*off),
                                 0)
             
+            # ★影の計算
+            shadow_factor = 0.0
+            if not in_transition:
+                for wave in mode_menu.shadow_waves:
+                    # 波の現在位置
+                    elapsed = sim_time - wave['start_time']
+                    wave_center = wave['start_pos'] + wave['direction'] * wave['speed'] * elapsed
+                    
+                    # エージェントから波の中心への投影距離
+                    to_agent = vector(ag.x - wave_center.x, ag.y - wave_center.y, 0)
+                    
+                    # 波の進行方向に垂直な距離（波の幅内かチェック）
+                    perpendicular_dist = abs(to_agent.cross(wave['direction']).z)
+                    
+                    # 波の進行方向の距離（フェードイン・アウト用）
+                    parallel_dist = to_agent.dot(wave['direction'])
+                    
+                    if perpendicular_dist < wave['width'] / 2:
+                        # 波の中心からの距離でフェード
+                        width_fade = 1.0 - (perpendicular_dist / (wave['width'] / 2))
+                        
+                        # 前後のフェード（魚群モードのキラキラのような有機的な形）
+                        if parallel_dist < -1.0:
+                            front_fade = 0.0
+                        elif parallel_dist < 1.0:
+                            # フロントエッジ：急激に立ち上がる
+                            front_fade = (parallel_dist + 1.0) / 2.0
+                            front_fade = front_fade * front_fade  # 二乗でシャープに
+                        elif parallel_dist < 3.0:
+                            # 中心部：最大強度
+                            front_fade = 1.0
+                        elif parallel_dist < 6.0:
+                            # バックエッジ：ゆっくりフェードアウト
+                            front_fade = 1.0 - (parallel_dist - 3.0) / 3.0
+                            front_fade = front_fade * front_fade * front_fade  # 三乗で滑らかに
+                        else:
+                            front_fade = 0.0
+                        
+                        # 時間によるフェード（最初と最後）
+                        time_fade = 1.0
+                        if elapsed < 1.0:
+                            time_fade = elapsed
+                        elif elapsed > wave['duration'] - 2.0:
+                            time_fade = (wave['duration'] - elapsed) / 2.0
+                        
+                        # 最終的な影の強度
+                        wave_shadow = width_fade * front_fade * time_fade * wave['intensity']
+                        shadow_factor = max(shadow_factor, wave_shadow)
+                        
+                        # デバッグ：影が計算されている場合
+                        if wave_shadow > 0.1 and ag.node_id % 10 == 0:  # 10個おきにログ
+                            print(f"Shadow calc - Agent {ag.node_id}: wave_shadow={wave_shadow:.2f}, "
+                                  f"perp_dist={perpendicular_dist:.1f}, para_dist={parallel_dist:.1f}")
+            
+            # 影のイージング（急激な変化を防ぐ）
+            target_shadow = shadow_factor
+            current_shadow = getattr(ag, 'shadow_factor', 0.0)
+            ag.shadow_factor = current_shadow + (target_shadow - current_shadow) * min(1.0, dt * 3.0)
+            
             # (H) 色更新（トランジション対応）
             global_hue = (sim_time * color_speed) % 1.0
             height_ratio = (ag.z - minZp) / (maxZp - minZp) if maxZp != minZp else 0.5
@@ -1807,9 +1847,16 @@ while True:
             r, g, b = colorsys.hsv_to_rgb(hue, 1.0, brightness)
             osc_client_max.send_message('/hue', hue)
             
-            # 自律モード時は色を少し変える（トランジション完了後のみ）
-            if ag.autonomous_mode and not in_transition:
-                r = min(1.0, r * 0.8 + 0.2)
+            # ★影エフェクトを適用（明度を下げる）
+            if ag.shadow_factor > 0:
+                shadow_mult = 1.0 - ag.shadow_factor * 0.9  # 最大90%暗くなる（より強く）
+                r *= shadow_mult
+                g *= shadow_mult
+                b *= shadow_mult
+                
+                # デバッグ：強い影が発生している場合
+                if ag.shadow_factor > 0.3:
+                    print(f"Agent {ag.node_id}: shadow_factor={ag.shadow_factor:.2f}, mult={shadow_mult:.2f}")
             
             target_color = vector(r, g, b)
             
@@ -1835,6 +1882,12 @@ while True:
 
     # ─── 天上天下モード ────────────────────────────────
     elif mode_menu.selected == "天上天下モード":
+        # ── Group A の初期色を 1 回だけ用意 ──
+        if not hasattr(mode_menu, "groupa_color"):
+            h_rand = random.random()
+            mode_menu.groupa_color = vector(*colorsys.hsv_to_rgb(h_rand, 1.0, 1.0))
+        # ---------------------------------------
+
         # ========================================================
         # 天上天下モードの初期化とトランジション
         # ========================================================
@@ -1849,6 +1902,14 @@ while True:
             # 初期パラメータ設定
             mode_menu.tenge_amplitude = 0.35  # 初期振幅
             mode_menu.tenge_speed = 1.0  # ラジアン/秒
+            
+            # ★Group B明度管理用の初期化
+            mode_menu.groupb_brightness_start_time = sim_time
+            mode_menu.groupb_brightness = 0.5  # 初期明度50%から開始
+            mode_menu.groupb_brightness_transition_start = sim_time - 1.0  # イージング済み状態で開始
+            mode_menu.groupb_prev_brightness = 0.5
+            mode_menu.groupb_hue_offset = 0.0      # 0–1 の範囲で回転
+            mode_menu.groupb_hue_speed  = 0.001     # rad/s 相当（好みで）  
             
             # モード切り替え検出
             if not hasattr(mode_menu, 'last_crossing_phase'):
@@ -1956,24 +2017,86 @@ while True:
                 selected_node_id = agents[current_groupA_idx].node_id
                 osc_client_max.send_message('/trig', int(selected_node_id))
                 # トランジション中はすぐに反映                
-                # 新しいパラメータ
-                mode_menu.tenge_amplitude = random.uniform(0.1, 0.35)
-                mode_menu.tenge_speed = random.uniform(0.8, 1.8)
+                # ★天上天下モードのパラメータ、振幅と速度をランダムに設定
+                mode_menu.tenge_amplitude = random.uniform(0.05, 0.35)
+                mode_menu.tenge_speed = random.uniform(0.5, 1.25)
                 
-                print(f"すれ違い! 新Group A: {current_groupA_idx}")
+                # crossing が True なら新しい Group A が決まった直後
+                if crossing or not hasattr(mode_menu, "groupa_color"):
+                    h_rand = random.random()                        # 0-1 の乱数 → 色相
+                    mode_menu.groupa_color = vector(*colorsys.hsv_to_rgb(h_rand, 1.0, 1.0))
 
+                # ★Group B明度をリセット
+                mode_menu.groupb_brightness_start_time = sim_time
+                mode_menu.groupb_brightness_transition_start = sim_time  # イージング開始時刻
+                mode_menu.groupb_prev_brightness = getattr(mode_menu, 'groupb_brightness', 1.0)  # 現在の明度を保存
+                # mode_menu.groupb_brightness = 1.0  # この行は削除（イージングで処理）
+                
+                print(f"すれ違い! 新Group A: {current_groupA_idx} (Node {selected_node_id})")
+
+        # ★Group B明度の計算（100%→50%への減衰）
+        if not in_transition:
+            # 初期フェード処理（モード開始時の0.5秒）
+            initial_fade_duration = 0.5
+            time_since_initial_fade = sim_time - getattr(mode_menu, 'groupb_initial_fade_start', sim_time - 10)
+            
+            if time_since_initial_fade < initial_fade_duration:
+                # 初期フェード中：100%から50%へ
+                t = time_since_initial_fade / initial_fade_duration
+                # easeInOutCubic
+                if t < 0.5:
+                    ease_t = 4 * t * t * t
+                else:
+                    ease_t = 1 - pow(-2 * t + 2, 3) / 2
+                mode_menu.groupb_brightness = 1.0 - 0.5 * ease_t  # 100%→50%
+            else:
+                # イージング処理（0.35秒）
+                brightness_transition_duration = 0.35
+                time_since_brightness_transition = sim_time - getattr(mode_menu, 'groupb_brightness_transition_start', sim_time - 10)
+                
+                if time_since_brightness_transition < brightness_transition_duration:
+                    # イージング中：前の明度から100%へ
+                    t = time_since_brightness_transition / brightness_transition_duration
+                    # easeOutCubic（素早く立ち上がって緩やかに収束）
+                    ease_t = 1 - pow(1 - t, 3)
+                    prev_brightness = getattr(mode_menu, 'groupb_prev_brightness', 0.5)
+                    mode_menu.groupb_brightness = prev_brightness + (1.0 - prev_brightness) * ease_t
+                else:
+                    # イージング完了後：100%から50%へ減衰
+                    time_since_crossing = sim_time - getattr(mode_menu, 'groupb_brightness_start_time', sim_time)
+                    
+                    # 次のすれ違いまでの推定時間（π/速度）
+                    estimated_crossing_interval = math.pi / mode_menu.tenge_speed
+                    
+                    # 線形補間で明度を計算（1.0→0.5）
+                    brightness_progress = min(1.0, time_since_crossing / estimated_crossing_interval)
+                    mode_menu.groupb_brightness = 1.0 - 0.5 * brightness_progress  # 100%から50%へ
+        
         # ─────────────────────────────────────────────
         # 4) 各エージェントに高さを設定
         # ─────────────────────────────────────────────
         for idx, ag in enumerate(agents):
             # グループ割り当て
-            if idx == current_groupA_idx:
-                new_group = "A"
-                target_color = vector(1.0, 0.3, 0.3)  # 赤系
-            else:
-                new_group = "B"
-                target_color = vector(0.25, 0.6, 1.0)  # 青系
-            
+            # ───────── グループ割り当てと色 ──────────
+            if idx == current_groupA_idx:        # ===== Group A =====
+                new_group   = "A"
+                target_color = mode_menu.groupa_color          # ← 生成済みの色をそのまま使用
+            else:                                # ===== Group B =====
+                new_group   = "B"
+                # 1) Group A の現在色 → HSV
+                ga_r, ga_g, ga_b = mode_menu.groupa_color.x, mode_menu.groupa_color.y, mode_menu.groupa_color.z
+                ga_h, _, _       = colorsys.rgb_to_hsv(ga_r, ga_g, ga_b)
+
+                # 2) 補色 (H+0.5) ＋ ゆっくり回転オフセット
+                h = (ga_h + 0.5 + mode_menu.groupb_hue_offset) % 1.0   # ← % 1.0 に修正
+                r, g, b = colorsys.hsv_to_rgb(h, 1.0, 1.0)
+
+                # 3) 明度フェードを掛ける
+                brightness   = getattr(mode_menu, 'groupb_brightness', 1.0)
+                target_color = vector(r * brightness,
+                                    g * brightness,
+                                    b * brightness)
+ 
             # 高さの設定
             if in_transition:
                 # トランジション中：開始位置から中間位置へ（全員同じ高さ）
@@ -1992,8 +2115,12 @@ while True:
                     # トランジション中は徐々に色を変える
                     ag.target_tenge_color = target_color
                 else:
-                    ag.current_color = vector(1.0, 0.3, 0.3) if new_group == "A" else vector(0.25, 0.6, 1.0)
+                    ag.current_color = target_color
                 ag.group = new_group
+            else:
+                # グループが変わらない場合でも、Group Bの明度更新
+                if ag.group == "B" and not in_transition:
+                    ag.current_color = target_color
 
         # ─────────────────────────────────────────────
         # 5) 向きとジオメトリ
@@ -2120,14 +2247,32 @@ while True:
                 for ld3, ld2, _ in ag.leds:
                     ld3.color = ld2.color = ag.current_color
             else:
-                # 通常時：既存の色フェード処理
+                # 通常時：明度調整済みの色を適用
+                # （既に上で設定済みなので、そのまま使用）
+                
+                # ★色の変化機能を復活（set_leds_tengeを呼び出す）
+                # これにより、グループ変更時の色のスムーズな変化が復活
                 ag.set_leds_tenge(sim_time, dt)
+                
+                # 明度調整を適用（set_leds_tengeの後で上書き）
+                if ag.group == "B":
+                    # Group Bのみ明度調整を適用
+                    brightness = getattr(mode_menu, 'groupb_brightness', 1.0)
+                    ag.current_color = vector(
+                        ag.current_color.x * brightness,
+                        ag.current_color.y * brightness,
+                        ag.current_color.z * brightness
+                    )
+                
+                # 最終的な色を適用
+                ag.body.color = ag.current_color
+                for ld3, ld2, _ in ag.leds:
+                    ld3.color = ld2.color = ag.current_color
 
         # 描画 & MQTT 送信
         for ag in agents:
             ag.display()
-            send_queue.put(ag)  
-
+            send_queue.put(ag)
 
     elif mode_menu.selected == "魚群モード":
             # ========================================================
