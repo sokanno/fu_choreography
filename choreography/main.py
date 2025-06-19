@@ -1840,9 +1840,9 @@ while True:
         # ========================================================
         
         # モード切り替え検出
-        if not hasattr(mode_menu, 'tenge_mode_initialized') or not mode_menu.tenge_mode_initialized:
+        if not hasattr(mode_menu, 'tenge_initialized') or not mode_menu.tenge_initialized:
             print(f"[天上天下モード] 初期化開始")
-            mode_menu.tenge_mode_initialized = True
+            mode_menu.tenge_initialized = True
             mode_menu.tenge_transition_start = sim_time
             mode_menu.tenge_transition_duration = 2.0  # 2秒のトランジション
             
@@ -2128,356 +2128,306 @@ while True:
             ag.display()
             send_queue.put(ag)  
 
-    # elif mode_menu.selected == "魚群モード":
-    #     # 0) 流れベクトル（逆向き）を先に求める
-    #     flow_vecs = []
-    #     for ag in agents:
-    #         fx = pnoise2(ag.i*noiseScale + noise_time,
-    #                     ag.j*noiseScale + noise_time)
-    #         fy = pnoise2(ag.i*noiseScale + noise_time + 50,
-    #                     ag.j*noiseScale + noise_time + 50)
-    #         v = vector(-fx, -fy, 0).norm()  # 逆向き
-    #         flow_vecs.append(v)
 
-    #     # 1) Boids in XY 平面
-    #     for idx, ag in enumerate(agents):
-    #         sep = coh = align = vector(0,0,0)
-    #         cnt = 0
-    #         for jdx in ag.neighbors:
-    #             if 0 <= jdx < len(agents):     # ★ガードを追加★
-    #                 nb = agents[jdx]
-    #                 dxy   = vector(nb.x - ag.x, nb.y - ag.y, 0)
-    #                 dist  = dxy.mag
-    #                 if dist < fish_sep_dist:
-    #                     sep -= dxy / (dist**2 + 1e-3)
-    #                 coh   += dxy
-    #                 align += flow_vecs[jdx]
-    #                 cnt   += 1
-
-    #         if cnt:
-    #             coh /= cnt
-    #             align /= cnt
-
-    #         steer = (sep*1.8 +
-    #                 coh * fish_coh_factor +
-    #                 align * fish_align_factor +
-    #                 flow_vecs[idx])
-
-    #         # 目標方向 → yaw/pitch
-    #         steer = steer.norm()
-    #         tgt_yaw   = math.degrees(math.atan2(steer.y, steer.x))
-    #         tgt_pitch = 0  # 水平泳ぎ
-
-    #         # 尾びれオシレータ
-    #         phase = ag.idx * 0.7  # 個体差
-    #         osc   = fin_osc_amp_deg * math.sin(2*math.pi*fin_osc_freq_hz*sim_time + phase)
-    #         tgt_yaw += osc
-
-    #         # イージング
-    #         k = min(1.0, ease_speed * dt)
-    #         dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
-    #         ag.yaw   += dyaw   * k
-    #         ag.pitch += (tgt_pitch - ag.pitch) * k
-
-    #         # Z の“押し返し”
-    #         z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
-    #                         ag.j*waveScale + sim_time*0.3)
-    #         ag.z = flow_target_height + z_wave*0.8  # 30 cm 振幅
-
-    #         update_geometry(ag)
-
-    #         # LED のきらめき
-    #         hue = (0.55 + steer.x*0.15) % 1.0        # 青緑系中心
-    #         flick = 0.7 + 0.3*math.sin(sim_time*10 + phase)
-    #         r,g,b = colorsys.hsv_to_rgb(hue, 0.8, flick)
-    #         col   = vector(r,g,b)
-    #         ag.current_color = col
-            
-            
-    #     # ─── 8) 描画・LED・MQTT 出力 ───────────────────────
-    #     for ag in agents:
-    #         ag.display()
-    #         for ld3, ld2, _ in ag.leds:
-    #             ld3.color = ld2.color = ag.current_color   # ← ここを修正
-    #         send_queue.put(ag)
     elif mode_menu.selected == "魚群モード":
-        # ========================================================
-        # 魚群モードの初期化とトランジション
-        # ========================================================
-        
-        # グローバルなprev_modeの確認（デバッグ用）
-        current_prev_mode = getattr(mode_menu, 'global_prev_mode', None)
-        
-        # モード切り替え検出（より確実な方法）
-        if not hasattr(mode_menu, 'fish_mode_initialized') or not mode_menu.fish_mode_initialized:
-            print(f"[魚群モード] 初期化開始 (前のモード: {current_prev_mode})")
-            mode_menu.fish_mode_initialized = True
-            mode_menu.fish_transition_start = sim_time
-            mode_menu.fish_transition_duration = 2.0  # 2秒のトランジション
+            # ========================================================
+            # 魚群モードの初期化とトランジション
+            # ========================================================
             
-            # 各エージェントの開始状態を保存
+            # グローバルなprev_modeの確認（デバッグ用）
+            current_prev_mode = getattr(mode_menu, 'global_prev_mode', None)
+            
+            # モード切り替え検出（より確実な方法）
+            if not hasattr(mode_menu, 'fish_mode_initialized') or not mode_menu.fish_mode_initialized:
+                print(f"[魚群モード] 初期化開始 (前のモード: {current_prev_mode})")
+                mode_menu.fish_mode_initialized = True
+                mode_menu.fish_transition_start = sim_time
+                mode_menu.fish_transition_duration = 2.0  # 2秒のトランジション
+                
+                # 各エージェントの開始状態を保存
+                for ag in agents:
+                    # 現在の状態を確実に保存
+                    ag.fish_start_z = ag.z
+                    ag.fish_start_yaw = ag.yaw
+                    ag.fish_start_pitch = ag.pitch
+                    ag.fish_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
+                    
+                    # ダウンライトの状態も保存
+                    ag.fish_start_downlight = getattr(ag, 'downlight_brightness', 0.0)
+                    
+                    # きらめき用の初期化
+                    ag.fish_flicker_phase = random.random() * 2 * math.pi  # 位相をランダム化
+                    ag.fish_flicker_frequency = 0.1  # 初期は低周波（ゆっくり）
+                    
+                    # 目標値を設定
+                    ag.fish_target_z = 2.0  # 基準高さ
+                    ag.fish_target_pitch = 0.0  # 水平
+                    ag.fish_target_color = vector(0.0, 0.7, 0.8)  # 青緑系の初期色
+                    
+                    # 波動の初期値を保存（ジャンプ防止用）
+                    initial_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
+                                        ag.j*waveScale + sim_time*0.3)
+                    ag.fish_initial_wave = initial_wave
+                    
+                    print(f"  Agent {ag.node_id}: z={ag.fish_start_z:.2f}→{ag.fish_target_z}, "
+                        f"pitch={ag.fish_start_pitch:.1f}→{ag.fish_target_pitch}, wave={initial_wave:.3f}")
+            
+            # 他のモードから切り替わった時のフラグリセット
+            if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "魚群モード":
+                # 他のモードの初期化フラグをリセット
+                mode_menu.shimmer_initialized = False
+                mode_menu.tenge_initialized = False
+                mode_menu.ceiling_initialized = False
+                # 必要に応じて他のモードのフラグも追加
+            
+            # トランジション進行度を計算
+            transition_elapsed = sim_time - getattr(mode_menu, 'fish_transition_start', sim_time)
+            transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'fish_transition_duration', 2.0))
+            
+            # イージング関数（easeInOutCubic）
+            if transition_progress < 0.5:
+                eased_progress = 4 * transition_progress * transition_progress * transition_progress
+            else:
+                eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
+            
+            # トランジション中かどうか
+            in_transition = transition_progress < 1.0
+            
+            # ========================================================
+            # 流れベクトルの計算（トランジション中も必要）
+            # ========================================================
+            flow_vecs = []
             for ag in agents:
-                # 現在の状態を確実に保存
-                ag.fish_start_z = ag.z
-                ag.fish_start_yaw = ag.yaw
-                ag.fish_start_pitch = ag.pitch
-                ag.fish_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
-                
-                # ダウンライトの状態も保存
-                ag.fish_start_downlight = getattr(ag, 'downlight_brightness', 0.0)
-                
-                # きらめき用の初期化
-                ag.fish_flicker_phase = random.random() * 2 * math.pi  # 位相をランダム化
-                ag.fish_flicker_frequency = 0.1  # 初期は低周波（ゆっくり）
-                
-                # 目標値を設定
-                ag.fish_target_z = 2.0  # 基準高さ
-                ag.fish_target_pitch = 0.0  # 水平
-                ag.fish_target_color = vector(0.0, 0.7, 0.8)  # 青緑系の初期色
-                
-                print(f"  Agent {ag.node_id}: z={ag.fish_start_z:.2f}→{ag.fish_target_z}, "
-                    f"pitch={ag.fish_start_pitch:.1f}→{ag.fish_target_pitch}")
-        
-        # 他のモードから切り替わった時のフラグリセット
-        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "魚群モード":
-            # 他のモードの初期化フラグをリセット
-            mode_menu.shimmer_initialized = False
-            mode_menu.tenge_initialized = False
-            mode_menu.ceiling_initialized = False
-            # 必要に応じて他のモードのフラグも追加
-        
-        # トランジション進行度を計算
-        transition_elapsed = sim_time - getattr(mode_menu, 'fish_transition_start', sim_time)
-        transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'fish_transition_duration', 2.0))
-        
-        # イージング関数（easeInOutCubic）
-        if transition_progress < 0.5:
-            eased_progress = 4 * transition_progress * transition_progress * transition_progress
-        else:
-            eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
-        
-        # トランジション中かどうか
-        in_transition = transition_progress < 1.0
-        
-        # ========================================================
-        # 流れベクトルの計算（トランジション中も必要）
-        # ========================================================
-        flow_vecs = []
-        for ag in agents:
-            fx = pnoise2(ag.i*noiseScale + noise_time,
-                        ag.j*noiseScale + noise_time)
-            fy = pnoise2(ag.i*noiseScale + noise_time + 50,
-                        ag.j*noiseScale + noise_time + 50)
-            v = vector(-fx, -fy, 0).norm()  # 逆向き
-            flow_vecs.append(v)
-
-        # ========================================================
-        # 各エージェントの更新
-        # ========================================================
-        for idx, ag in enumerate(agents):
-            # Boids計算（トランジション中も行う）
-            sep = coh = align = vector(0,0,0)
-            cnt = 0
-            for jdx in ag.neighbors:
-                if 0 <= jdx < len(agents):
-                    nb = agents[jdx]
-                    dxy = vector(nb.x - ag.x, nb.y - ag.y, 0)
-                    dist = dxy.mag
-                    if dist < fish_sep_dist:
-                        sep -= dxy / (dist**2 + 1e-3)
-                    coh += dxy
-                    align += flow_vecs[jdx]
-                    cnt += 1
-
-            if cnt:
-                coh /= cnt
-                align /= cnt
-
-            steer = (sep*1.8 +
-                    coh * fish_coh_factor +
-                    align * fish_align_factor +
-                    flow_vecs[idx])
-
-            # 目標方向
-            steer = steer.norm()
-            tgt_yaw = math.degrees(math.atan2(steer.y, steer.x))
-            tgt_pitch = 0  # 水平泳ぎ
-
-            # 尾びれオシレータ
-            phase = ag.idx * 0.7
-            osc = fin_osc_amp_deg * math.sin(2*math.pi*fin_osc_freq_hz*sim_time + phase)
-            
-            # トランジション中は振幅を抑える
-            if in_transition:
-                osc *= eased_progress
-            
-            tgt_yaw += osc
+                fx = pnoise2(ag.i*noiseScale + noise_time,
+                            ag.j*noiseScale + noise_time)
+                fy = pnoise2(ag.i*noiseScale + noise_time + 50,
+                            ag.j*noiseScale + noise_time + 50)
+                v = vector(-fx, -fy, 0).norm()  # 逆向き
+                flow_vecs.append(v)
 
             # ========================================================
-            # 位置・姿勢の更新（トランジション処理込み）
+            # 各エージェントの更新
             # ========================================================
-            
-            if in_transition:
-                # Z座標のトランジション（確実に開始値から目標値へ）
-                ag.z = ag.fish_start_z + (ag.fish_target_z - ag.fish_start_z) * eased_progress
-                
-                # Pitchのトランジション（確実に開始値から目標値へ）
-                ag.pitch = ag.fish_start_pitch + (ag.fish_target_pitch - ag.fish_start_pitch) * eased_progress
-                
-                # Yawのトランジション（目標方向に向かって徐々に調整）
-                dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
-                # トランジション中は回転速度を調整
-                k = min(1.0, ease_speed * dt * eased_progress)
-                ag.yaw += dyaw * k
-                
-                # 色のトランジション（確実に開始色から目標色へ）
-                base_color = vector(
-                    ag.fish_start_color.x + (ag.fish_target_color.x - ag.fish_start_color.x) * eased_progress,
-                    ag.fish_start_color.y + (ag.fish_target_color.y - ag.fish_start_color.y) * eased_progress,
-                    ag.fish_start_color.z + (ag.fish_target_color.z - ag.fish_start_color.z) * eased_progress
-                )
-            else:
-                # 通常のイージング
-                k = min(1.0, ease_speed * dt)
-                dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
-                ag.yaw += dyaw * k
-                ag.pitch += (tgt_pitch - ag.pitch) * k
-                
-                # 基本色
-                base_color = ag.fish_target_color
+            for idx, ag in enumerate(agents):
+                # Boids計算（トランジション中も行う）
+                sep = coh = align = vector(0,0,0)
+                cnt = 0
+                for jdx in ag.neighbors:
+                    if 0 <= jdx < len(agents):
+                        nb = agents[jdx]
+                        dxy = vector(nb.x - ag.x, nb.y - ag.y, 0)
+                        dist = dxy.mag
+                        if dist < fish_sep_dist:
+                            sep -= dxy / (dist**2 + 1e-3)
+                        coh += dxy
+                        align += flow_vecs[jdx]
+                        cnt += 1
 
-            # ========================================================
-            # Z座標の波動（人を避ける動作）
-            # ========================================================
-            z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
-                            ag.j*waveScale + sim_time*0.3)
-            
-            # 人との距離に基づいて振幅と中心高さを計算
-            min_amplitude = 0.25
-            max_amplitude = 0.4
-            avoid_radius = 1.5
-            
-            base_height_with_person = 2.5
-            base_height_without_person = 2.0
-            
-            # 各観客からの影響を計算
-            amplitude_factor = 1.0
-            height_factor = 1.0
-            
-            for person in audiences:
-                dist = math.hypot(person.x - ag.x, person.y - ag.y)
-                
-                if dist < avoid_radius:
-                    t = dist / avoid_radius
-                    smooth_t = t * t * (3 - 2 * t)
-                    person_factor = smooth_t
-                    amplitude_factor = min(amplitude_factor, person_factor)
-                    height_factor = min(height_factor, person_factor)
-            
-            # 最終的な振幅を計算（トランジション中は徐々に増加）
-            wave_amplitude = min_amplitude + (max_amplitude - min_amplitude) * amplitude_factor
-            if in_transition:
-                wave_amplitude *= eased_progress
-            
-            # 基準高さを計算
-            current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1 - height_factor)
-            
-            # トランジション完了後のみ波動を適用
-            if not in_transition:
-                ag.z = current_base_height + z_wave * wave_amplitude
-            else:
-                # トランジション中は波動効果を徐々に適用
-                wave_effect = z_wave * wave_amplitude * eased_progress
-                target_with_wave = ag.fish_target_z + wave_effect
-                ag.z = ag.fish_start_z + (target_with_wave - ag.fish_start_z) * eased_progress
-            
-            # 高さの制限
-            ag.z = max(minZ, min(maxZ, ag.z))
+                if cnt:
+                    coh /= cnt
+                    align /= cnt
 
-            # ジオメトリ更新
-            update_geometry(ag)
+                steer = (sep*1.8 +
+                        coh * fish_coh_factor +
+                        align * fish_align_factor +
+                        flow_vecs[idx])
 
-            # ========================================================
-            # LED色のきらめき（徐々に周波数を上げる）
-            # ========================================================
-            
-            # きらめきの周波数を徐々に上げる
-            if in_transition:
-                # 0.1Hz（ゆっくり）から10Hz（速い）へ
-                target_frequency = 10.0
-                ag.fish_flicker_frequency = 0.1 + (target_frequency - 0.1) * eased_progress
+                # 目標方向
+                steer = steer.norm()
+                tgt_yaw = math.degrees(math.atan2(steer.y, steer.x))
+                tgt_pitch = 0  # 水平泳ぎ
+
+                # 尾びれオシレータ
+                phase = ag.idx * 0.7
+                osc = fin_osc_amp_deg * math.sin(2*math.pi*fin_osc_freq_hz*sim_time + phase)
                 
-                # 色相の変化幅も徐々に増やす
-                hue_variation = 0.02 + 0.13 * eased_progress  # 0.02→0.15
-                brightness_variation = 0.05 + 0.25 * eased_progress  # 0.05→0.3
-            else:
-                ag.fish_flicker_frequency = 10.0
-                hue_variation = 0.15
-                brightness_variation = 0.3
-            
-            # きらめきの計算（各エージェントの位相を使用）
-            hue = (0.55 + steer.x * hue_variation) % 1.0
-            flick = 0.7 + brightness_variation * math.sin(ag.fish_flicker_frequency * sim_time + ag.fish_flicker_phase)
-            
-            # 明度を制限（暗くなりすぎない）
-            flick = max(0.5, min(1.0, flick))
-            
-            r, g, b = colorsys.hsv_to_rgb(hue, 0.8, flick)
-            flicker_color = vector(r, g, b)
-            
-            # トランジション中は基本色ときらめき色をブレンド
-            if in_transition:
-                # きらめきの影響を徐々に強くする
-                blend_factor = eased_progress * 0.7  # 最大70%までブレンド
-                final_color = base_color * (1 - blend_factor) + flicker_color * blend_factor
-            else:
-                final_color = flicker_color
-            
-            ag.current_color = final_color
-            
-            # ========================================================
-            # ダウンライトのランダムきらめき
-            # ========================================================
-            if not hasattr(ag, 'downlight_flicker_time'):
-                ag.downlight_flicker_time = -999.0
-                ag.downlight_base = 0.0
-            
-            flicker_duration = 0.5
-            
-            # トランジション中はきらめきを抑制
-            trigger_probability = 0.017 if not in_transition else 0.017 * eased_progress
-            
-            if random.random() < trigger_probability:
-                ag.downlight_flicker_time = sim_time
-            
-            flicker_age = sim_time - ag.downlight_flicker_time
-            if 0 <= flicker_age <= flicker_duration:
-                t = flicker_age / flicker_duration
-                intensity = math.sin(t * math.pi)
-                max_intensity = 0.3 if not in_transition else 0.3 * eased_progress
-                ag.downlight_brightness = intensity * max_intensity
-            else:
-                # トランジション中は徐々に消灯
+                # トランジション中は振幅を抑える
                 if in_transition:
-                    ag.downlight_brightness = ag.fish_start_downlight * (1 - eased_progress)
+                    osc *= eased_progress
+                
+                tgt_yaw += osc
+
+                # ========================================================
+                # 位置・姿勢の更新（トランジション処理込み）
+                # ========================================================
+                
+                if in_transition:
+                    # Z座標のトランジション（確実に開始値から目標値へ）
+                    ag.z = ag.fish_start_z + (ag.fish_target_z - ag.fish_start_z) * eased_progress
+                    
+                    # Pitchのトランジション（確実に開始値から目標値へ）
+                    ag.pitch = ag.fish_start_pitch + (ag.fish_target_pitch - ag.fish_start_pitch) * eased_progress
+                    
+                    # Yawのトランジション（目標方向に向かって徐々に調整）
+                    dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+                    # トランジション中は回転速度を調整
+                    k = min(1.0, ease_speed * dt * eased_progress)
+                    ag.yaw += dyaw * k
+                    
+                    # 色のトランジション（確実に開始色から目標色へ）
+                    base_color = vector(
+                        ag.fish_start_color.x + (ag.fish_target_color.x - ag.fish_start_color.x) * eased_progress,
+                        ag.fish_start_color.y + (ag.fish_target_color.y - ag.fish_start_color.y) * eased_progress,
+                        ag.fish_start_color.z + (ag.fish_target_color.z - ag.fish_start_color.z) * eased_progress
+                    )
                 else:
-                    ag.downlight_brightness = 0.0
+                    # 通常のイージング
+                    k = min(1.0, ease_speed * dt)
+                    dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+                    ag.yaw += dyaw * k
+                    ag.pitch += (tgt_pitch - ag.pitch) * k
+                    
+                    # 基本色
+                    base_color = ag.fish_target_color
+
+                # ========================================================
+                # Z座標の波動（人を避ける動作）
+                # ========================================================
+                z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
+                                ag.j*waveScale + sim_time*0.3)
+                
+                # 人との距離に基づいて振幅と中心高さを計算
+                min_amplitude = 0.25
+                max_amplitude = 0.4
+                avoid_radius = 1.5
+                
+                base_height_with_person = 2.5
+                base_height_without_person = 2.0
+                
+                # 各観客からの影響を計算
+                amplitude_factor = 1.0
+                height_factor = 1.0
+                
+                for person in audiences:
+                    dist = math.hypot(person.x - ag.x, person.y - ag.y)
+                    
+                    if dist < avoid_radius:
+                        t = dist / avoid_radius
+                        smooth_t = t * t * (3 - 2 * t)
+                        person_factor = smooth_t
+                        amplitude_factor = min(amplitude_factor, person_factor)
+                        height_factor = min(height_factor, person_factor)
+                
+                # 最終的な振幅を計算
+                wave_amplitude = min_amplitude + (max_amplitude - min_amplitude) * amplitude_factor
+                
+                # 基準高さを計算
+                current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1 - height_factor)
+                
+                # 目標のZ座標（波動を含む最終位置）
+                target_z_with_wave = current_base_height + z_wave * wave_amplitude
+                
+                # 波動効果の段階的適用（トランジション後も3秒かけて）
+                wave_ramp_duration = 3.0
+                time_since_transition = sim_time - getattr(mode_menu, 'fish_transition_start', sim_time) - getattr(mode_menu, 'fish_transition_duration', 2.0)
+                
+                if in_transition:
+                    # トランジション中：開始位置から基準高さへ
+                    ag.z = ag.fish_start_z + (ag.fish_target_z - ag.fish_start_z) * eased_progress
+                elif time_since_transition < wave_ramp_duration:
+                    # トランジション直後：基準高さから波動込みの高さへ徐々に移行
+                    wave_progress = time_since_transition / wave_ramp_duration
+                    # easeInOutでスムーズに
+                    if wave_progress < 0.5:
+                        wave_eased = 2 * wave_progress * wave_progress
+                    else:
+                        wave_eased = 1 - pow(-2 * wave_progress + 2, 2) / 2
+                    
+                    # 初期波動値から現在の波動値へ補間（ジャンプ防止）
+                    initial_wave = getattr(ag, 'fish_initial_wave', 0.0)
+                    interpolated_wave = initial_wave + (z_wave - initial_wave) * wave_eased
+                    
+                    # 波動効果も徐々に適用
+                    ag.z = ag.fish_target_z + interpolated_wave * wave_amplitude * wave_eased
+                else:
+                    # 通常時：完全な波動効果
+                    ag.z = target_z_with_wave
+                
+                # 高さの制限
+                ag.z = max(minZ, min(maxZ, ag.z))
+
+                # ジオメトリ更新
+                update_geometry(ag)
+
+                # ========================================================
+                # LED色のきらめき（徐々に周波数を上げる）
+                # ========================================================
+                
+                # きらめきの周波数を徐々に上げる
+                if in_transition:
+                    # 0.1Hz（ゆっくり）から10Hz（速い）へ
+                    target_frequency = 10.0
+                    ag.fish_flicker_frequency = 0.1 + (target_frequency - 0.1) * eased_progress
+                    
+                    # 色相の変化幅も徐々に増やす
+                    hue_variation = 0.02 + 0.13 * eased_progress  # 0.02→0.15
+                    brightness_variation = 0.05 + 0.25 * eased_progress  # 0.05→0.3
+                else:
+                    ag.fish_flicker_frequency = 10.0
+                    hue_variation = 0.15
+                    brightness_variation = 0.3
+                
+                # きらめきの計算（各エージェントの位相を使用）
+                hue = (0.55 + steer.x * hue_variation) % 1.0
+                flick = 0.7 + brightness_variation * math.sin(ag.fish_flicker_frequency * sim_time + ag.fish_flicker_phase)
+                
+                # 明度を制限（暗くなりすぎない）
+                flick = max(0.5, min(1.0, flick))
+                
+                r, g, b = colorsys.hsv_to_rgb(hue, 0.8, flick)
+                flicker_color = vector(r, g, b)
+                
+                # トランジション中は基本色ときらめき色をブレンド
+                if in_transition:
+                    # きらめきの影響を徐々に強くする
+                    blend_factor = eased_progress * 0.7  # 最大70%までブレンド
+                    final_color = base_color * (1 - blend_factor) + flicker_color * blend_factor
+                else:
+                    final_color = flicker_color
+                
+                ag.current_color = final_color
+                
+                # ========================================================
+                # ダウンライトのランダムきらめき
+                # ========================================================
+                if not hasattr(ag, 'downlight_flicker_time'):
+                    ag.downlight_flicker_time = -999.0
+                    ag.downlight_base = 0.0
+                
+                flicker_duration = 0.5
+                
+                # トランジション中はきらめきを抑制
+                trigger_probability = 0.017 if not in_transition else 0.017 * eased_progress
+                
+                if random.random() < trigger_probability:
+                    ag.downlight_flicker_time = sim_time
+                
+                flicker_age = sim_time - ag.downlight_flicker_time
+                if 0 <= flicker_age <= flicker_duration:
+                    t = flicker_age / flicker_duration
+                    intensity = math.sin(t * math.pi)
+                    max_intensity = 0.3 if not in_transition else 0.3 * eased_progress
+                    ag.downlight_brightness = intensity * max_intensity
+                else:
+                    # トランジション中は徐々に消灯
+                    if in_transition:
+                        ag.downlight_brightness = ag.fish_start_downlight * (1 - eased_progress)
+                    else:
+                        ag.downlight_brightness = 0.0
+                
+                # ダウンライト表示更新
+                update_downlight_display(ag)
             
-            # ダウンライト表示更新
-            update_downlight_display(ag)
-        
-        # ========================================================
-        # 描画・LED・MQTT出力
-        # ========================================================
-        for ag in agents:
-            ag.display()
-            ag.body.color = ag.current_color
-            for ld3, ld2, _ in ag.leds:
-                ld3.color = ld2.color = ag.current_color
-            send_queue.put(ag)
-        
-        # 現在のモードを記録（メインループの最後で更新される想定）
-        # mode_menu.global_prev_mode = "魚群モード"
+            # ========================================================
+            # 描画・LED・MQTT出力
+            # ========================================================
+            for ag in agents:
+                ag.display()
+                ag.body.color = ag.current_color
+                for ld3, ld2, _ in ag.leds:
+                    ld3.color = ld2.color = ag.current_color
+                send_queue.put(ag)
+
     # ------------------------------------------------------------
     elif mode_menu.selected == "蜂シマーモード":
     # ------------------------------------------------------------
@@ -2514,93 +2464,71 @@ while True:
         white_mix_peak = 0.5
         bright_peak    = 0.5
         
-        # ★追加：モード開始時の初期化チェック
-        if not hasattr(mode_menu, 'shimmer_initialized'):
+        # ★改善：モード開始時の初期化チェック
+        if not hasattr(mode_menu, 'shimmer_initialized') or not mode_menu.shimmer_initialized:
+            print(f"[シマーモード] 初期化開始")
             mode_menu.shimmer_initialized = True
-            mode_menu.shimmer_reset_start = sim_time
-            mode_menu.shimmer_reset_duration = 1.0  # 1秒かけて正位置に戻す
+            mode_menu.shimmer_transition_start = sim_time
+            mode_menu.shimmer_transition_duration = 2.0  # 2秒のトランジション（他モードと統一）
             
             # 各エージェントの現在位置を記憶
             for ag in agents:
                 ag.shimmer_start_z = ag.z
                 ag.shimmer_start_yaw = ag.yaw
                 ag.shimmer_start_pitch = ag.pitch
-                # デフォルトの正位置を設定（z=2.5, yaw=各自の初期値, pitch=0）
-                ag.shimmer_default_z = 2.5  # または flow_target_height
-                ag.shimmer_default_pitch = 0.0
+                ag.shimmer_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
                 
-                # シマーモード用の初期化も同時に行う
+                # デフォルトの正位置を設定
+                ag.shimmer_default_z = 2.5  # シマーモードの基準高さ
+                ag.shimmer_default_pitch = 0.0
+                ag.shimmer_default_color = vector(0.5, 0.5, 0.0)  # 黄色系
+                
+                # シマーモード用の初期化
                 ag.yaw0 = ag.yaw
                 ag.z0 = ag.shimmer_default_z  # 正位置をベースに
                 ag.face_dir = ag.yaw0
-                ag.actual_face_dir = ag.yaw0  # ★追加：実際の向き
+                ag.actual_face_dir = ag.yaw0
+                ag.last_had_audience = False  # 観客検出状態を初期化
                 ag.kick_time = ag.drop_time = ag.color_t0 = -999.0
                 ag.kick_peak = 0.0
                 ag.drop_mode = "norm"
-                ag.current_color = vector(0.5, 0.5, 0.0)
+                ag.current_color = ag.shimmer_default_color
                 ag.color_from = ag.color_to = ag.current_color
                 ag.drop_down_s = drop_down_s_n
                 ag.drop_up_s = drop_up_s_n
                 ag.drop_total = drop_total_n
                 ag.drop_m = drop_m_norm
+                
+                print(f"  Agent {ag.node_id}: z={ag.shimmer_start_z:.2f}→{ag.shimmer_default_z}, "
+                      f"yaw={ag.shimmer_start_yaw:.1f}, pitch={ag.shimmer_start_pitch:.1f}")
         
-        # 他のモードから切り替わった時のフラグリセット
-        if not hasattr(mode_menu, 'prev_mode'):
-            mode_menu.prev_mode = mode_menu.selected
-        elif mode_menu.prev_mode != mode_menu.selected:
-            mode_menu.shimmer_initialized = False
-            mode_menu.prev_mode = mode_menu.selected
+        # 他のモードの初期化フラグをリセット
+        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "蜂シマーモード":
+            mode_menu.fish_mode_initialized = False
+            mode_menu.tenge_mode_initialized = False
+            mode_menu.ceiling_mode_initialized = False
             # 波イベントもクリア
             wave_events.clear()
-            next_shim_time = sim_time + 1.5  # リセット後に波を開始
         
-        # ★位置リセット処理（最初の1秒間）
-        reset_elapsed = sim_time - getattr(mode_menu, 'shimmer_reset_start', 0)
-        if reset_elapsed < getattr(mode_menu, 'shimmer_reset_duration', 0):
-            # イージング係数（0→1）
-            t = reset_elapsed / mode_menu.shimmer_reset_duration
-            # easeInOutCubic
-            if t < 0.5:
-                ease_t = 4 * t * t * t
-            else:
-                ease_t = 1 - pow(-2 * t + 2, 3) / 2
-            
-            # 各エージェントを正位置へ移動
-            for ag in agents:
-                # 位置の補間
-                ag.z = ag.shimmer_start_z + (ag.shimmer_default_z - ag.shimmer_start_z) * ease_t
-                ag.pitch = ag.shimmer_start_pitch + (ag.shimmer_default_pitch - ag.shimmer_start_pitch) * ease_t
-                # yawは維持（または必要に応じて調整）
-                
-                # ジオメトリ更新
-                update_geometry(ag)
-                
-                # この間は波動を発生させない
-                ag.z0 = ag.z  # 現在位置をベースラインに
-            
-            # リセット中は波を発生させない
-            next_shim_time = sim_time + mode_menu.shimmer_reset_duration + 0.5
-            
-            # 色も徐々にシマーモードの初期色へ
-            for ag in agents:
-                shimmer_base_color = vector(0.5, 0.5, 0.0)
-                ag.current_color = ag.current_color * (1 - ease_t) + shimmer_base_color * ease_t
-                ag.body.color = ag.current_color
-                for ld3, ld2, _ in ag.leds:
-                    ld3.color = ld2.color = ag.current_color
-            
-            # MQTT送信
-            for ag in agents:
-                ag.display()
-                send_queue.put(ag)
-            
-            # リセット中は以降の処理をスキップ
-            continue
+        # ★トランジション進行度を計算
+        transition_elapsed = sim_time - getattr(mode_menu, 'shimmer_transition_start', sim_time)
+        transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'shimmer_transition_duration', 2.0))
         
-        # ★以下、既存のシマーモード処理（パラメータ定義は上に移動済み）
-
-        # --- 2) 波発生の部分も修正 ---
-        if sim_time >= next_shim_time:
+        # イージング関数（easeInOutCubic）
+        if transition_progress < 0.5:
+            eased_progress = 4 * transition_progress * transition_progress * transition_progress
+        else:
+            eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
+        
+        # トランジション中かどうか
+        in_transition = transition_progress < 1.0
+        
+        # ★トランジション中は波を発生させない
+        if in_transition:
+            next_shim_time = sim_time + mode_menu.shimmer_transition_duration - transition_elapsed + 0.5
+        
+        # --- 2) 波発生処理（トランジション完了後のみ） ---
+        if not in_transition and sim_time >= next_shim_time:
             # 波の色・震源ノード・進行方向を決定
             hue = random.random()
             r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
@@ -2649,15 +2577,51 @@ while True:
 
         # --- 3) 各ノードの共通更新処理 ---
         for ag in agents:
+            # ★トランジション中の処理
+            if in_transition:
+                # 位置の補間
+                ag.z = ag.shimmer_start_z + (ag.shimmer_default_z - ag.shimmer_start_z) * eased_progress
+                ag.pitch = ag.shimmer_start_pitch + (ag.shimmer_default_pitch - ag.shimmer_start_pitch) * eased_progress
+                # yawは維持または少しずつ調整
+                
+                # 色の補間
+                ag.current_color = vector(
+                    ag.shimmer_start_color.x + (ag.shimmer_default_color.x - ag.shimmer_start_color.x) * eased_progress,
+                    ag.shimmer_start_color.y + (ag.shimmer_default_color.y - ag.shimmer_start_color.y) * eased_progress,
+                    ag.shimmer_start_color.z + (ag.shimmer_default_color.z - ag.shimmer_start_color.z) * eased_progress
+                )
+                
+                # z0を現在位置に設定（トランジション完了時にスムーズに繋がるように）
+                ag.z0 = ag.z
+                
+                # ベースの振動を徐々に開始
+                z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7) * shim_base_amp_m * eased_progress
+                ag.z = clamp(ag.z + z_off, minZ, maxZ)
+                
+                # ジオメトリ更新
+                update_geometry(ag)
+                
+                # 色を適用
+                ag.body.color = ag.current_color
+                for ld3, ld2, _ in ag.leds:
+                    ld3.color = ld2.color = ag.current_color
+                    
+                # 自律モード表示を更新（トランジション中はオフ）
+                ag.autonomous_mode = False
+                ag.update_autonomous_indicator()
+                
+                continue  # トランジション中は通常処理をスキップ
+            
+            # ★以下、通常のシマーモード処理
             # z_off のベース（サイン波で上下振動）
             z_off = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7) * shim_base_amp_m
 
-            # (1) 初期化
+            # (1) 初期化（既に初期化済みなのでスキップ可能）
             if not hasattr(ag, "yaw0"):
                 ag.yaw0       = ag.yaw
                 ag.z0         = ag.z
                 ag.face_dir   = ag.yaw0
-                ag.actual_face_dir = ag.yaw0  # ★追加
+                ag.actual_face_dir = ag.yaw0
                 ag.kick_time  = ag.drop_time = ag.color_t0 = -999.0
                 ag.kick_peak  = 0.0
                 ag.drop_mode  = "norm"
@@ -2718,7 +2682,7 @@ while True:
             else:
                 # 観客がいない場合
                 ag.autonomous_mode = False
-                target_yaw = ag.actual_face_dir  # ★修正：face_dirではなくactual_face_dirを使用
+                target_yaw = ag.actual_face_dir
                 target_pitch = 0
 
             # ★(4) 回転処理（修正版）
@@ -2743,14 +2707,27 @@ while True:
                 dpitch = target_pitch - ag.pitch
                 ag.pitch += dpitch * ease_factor
             else:
-                # 観客がいない場合は actual_face_dir に波のキックを加える
+                # ★観客がいない場合の処理を改善
+                # actual_face_dirに向かってイージングで戻る
+                if hasattr(ag, 'last_had_audience') and ag.last_had_audience:
+                    # 観客がいなくなった直後：現在のyawをactual_face_dirとして保存
+                    ag.actual_face_dir = ag.yaw
+                    ag.last_had_audience = False
+                
+                # 波のキックを適用した目標方向
                 desired_yaw = ag.actual_face_dir + yaw_kick
                 dyaw = ((desired_yaw - ag.yaw + 540) % 360) - 180
-                ag.yaw += dyaw * 0.1
+                ag.yaw += dyaw * 0.1  # イージングで滑らかに
+                
                 # actual_face_dirは波の影響を受けて徐々に更新
                 if abs(yaw_kick) > 1:  # 波のキックが有効な時のみ更新
                     ag.actual_face_dir += yaw_kick * 0.02  # ゆっくり更新
-                ag.pitch = 0  # または維持
+                    
+                # Pitchは0に向かってイージング
+                ag.pitch += (0 - ag.pitch) * 0.1
+            
+            # 観客検出状態を記録
+            ag.last_had_audience = (closest is not None)
             
             # actual_pitchを更新
             ag.actual_pitch = ag.pitch
@@ -2842,7 +2819,20 @@ while True:
                         break
 
             # ── 各エージェントの最終的な z 座標 / 表示更新 ──────────────
-            ag.z = clamp(ag.z0 + z_off + drop_off, minZ, maxZ)
+            final_z = ag.z0 + z_off + drop_off
+            
+            # ★安全性チェック：急激な変化を防ぐ
+            max_z_change = 0.5  # 1フレームでの最大変化量
+            if hasattr(ag, 'prev_z'):
+                z_change = final_z - ag.prev_z
+                if abs(z_change) > max_z_change:
+                    # 変化量を制限
+                    final_z = ag.prev_z + max_z_change * (1 if z_change > 0 else -1)
+                    print(f"[安全性] Agent {ag.node_id}: z変化を制限 {z_change:.2f} -> {final_z - ag.prev_z:.2f}")
+            
+            ag.z = clamp(final_z, minZ, maxZ)
+            ag.prev_z = ag.z  # 次フレーム用に保存
+            
             update_geometry(ag)
             for l3, l2, _ in ag.leds:
                 l3.color = l2.color = ag.current_color
@@ -2895,6 +2885,9 @@ while True:
 
                     # z_off を強制的に大きくして跳ね上げ
                     ag.z = clamp(ag.z + shim_base_amp_m * 4, minZ, maxZ)
+                    
+                    # ★重要：基準高さは維持（元の高さに戻るように）
+                    # ag.z0 = ag.z  # これを削除！z0は更新しない
 
                     # ノードのステートを初期化／更新
                     ag.kick_time = sim_time
@@ -2931,10 +2924,6 @@ while True:
                                 ag.current_color.z)
             send_queue.put(ag)
 
-        # 2) 古い波 8 s で削除
-        wave_fronts[:] = [(x,y,t,c,d) for (x,y,t,c,d) in wave_fronts
-                        if sim_time - t < 8]
-    # ------------------------------------------------------------
     # メインループの既存のelif文の後に追加：
     elif mode_menu.selected == "マニュアルモード":
         # マニュアルモードの処理
@@ -2946,6 +2935,7 @@ while True:
             ag.display()
             update_downlight_display(ag)  # ← ダウンライト表示を更新
             send_queue.put(ag)
+
 
     # 音に対するインタラクティブモード
     apply_sound_reaction()     # ★追加★
