@@ -20,7 +20,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "berlin"  # "venue" or else
+place = "venue"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -2306,7 +2306,7 @@ while True:
                     ag.fish_flicker_frequency = 0.1  # 初期は低周波（ゆっくり）
                     
                     # 目標値を設定
-                    ag.fish_target_z = 2.0  # 基準高さ
+                    ag.fish_target_z = 2.7  # 基準高さ
                     ag.fish_target_pitch = 0.0  # 水平
                     ag.fish_target_color = vector(0.0, 0.7, 0.8)  # 青緑系の初期色
                     
@@ -2433,12 +2433,12 @@ while True:
                                 ag.j*waveScale + sim_time*0.3)
                 
                 # 人との距離に基づいて振幅と中心高さを計算
-                min_amplitude = 0.25
-                max_amplitude = 0.4
+                min_amplitude = 0.15
+                max_amplitude = 0.3
                 avoid_radius = 1.5
                 
                 base_height_with_person = 2.5
-                base_height_without_person = 2.0
+                base_height_without_person = 2.3
                 
                 # 各観客からの影響を計算
                 amplitude_factor = 1.0
@@ -2552,7 +2552,8 @@ while True:
                 if 0 <= flicker_age <= flicker_duration:
                     t = flicker_age / flicker_duration
                     intensity = math.sin(t * math.pi)
-                    max_intensity = 0.3 if not in_transition else 0.3 * eased_progress
+                    # max_intensity = 0.3 if not in_transition else 0.3 * eased_progress
+                    max_intensity = 0.07 if not in_transition else 0.07 * eased_progress
                     ag.downlight_brightness = intensity * max_intensity
                 else:
                     # トランジション中は徐々に消灯
@@ -2631,7 +2632,7 @@ while True:
                 ag.shimmer_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
                 
                 # デフォルトの正位置を設定
-                ag.shimmer_default_z = 2.5  # シマーモードの基準高さ
+                ag.shimmer_default_z = 2.7  # シマーモードの基準高さ
                 ag.shimmer_default_pitch = 0.0
                 ag.shimmer_default_color = vector(0.5, 0.5, 0.0)  # 黄色系
                 
