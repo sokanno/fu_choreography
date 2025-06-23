@@ -1641,7 +1641,7 @@ while True:
                     'start_pos': vector(start_x, start_y, 0),
                     'direction': direction,
                     'speed': random.uniform(5.0, 10.0), # was  (1.5, 3.0)
-                    'width': random.uniform(3.0, 6.0),
+                    'width': random.uniform(3.0, 10.0),
                     'intensity': random.uniform(1.0, 2.0),  # 強度を上げる(0.5, 0.8),  # 強度を上げる
                     'start_time': sim_time,
                     'duration': 15.0  # 15秒で消える
@@ -1649,7 +1649,7 @@ while True:
                 mode_menu.shadow_waves.append(shadow_wave)
                 
                 # 次の影の発生時刻
-                mode_menu.next_shadow_time = sim_time + random.uniform(5.0, 10.0)
+                mode_menu.next_shadow_time = sim_time + random.uniform(1.0, 5.0)
                 print(f"[影の波] 発生 from {edge_choice}, intensity={shadow_wave['intensity']:.2f}, "
                       f"width={shadow_wave['width']:.1f}, speed={shadow_wave['speed']:.1f}")
             
@@ -1878,6 +1878,7 @@ while True:
             
             # (I) MQTT送信
             send_queue.put(ag)
+
 
 
     # ─── 天上天下モード ────────────────────────────────
@@ -2592,7 +2593,7 @@ while True:
         drop_up_s_n   = 1.0
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
-        rare_prob     = 0.02 # was 0.002
+        rare_prob     = 0.0 # was 0.002
         rare_factor   = 6
         drop_m_rare   = drop_m_norm * rare_factor
         drop_down_s_r = drop_down_s_n * rare_factor
@@ -2608,6 +2609,12 @@ while True:
         flash_decay_s  = 1.5
         white_mix_peak = 0.5
         bright_peak    = 0.5
+        
+        # ★新しい光量パラメータ
+        brightness_rise_s = 0.35    # 明るくなるまでの時間
+        brightness_hold_s = 0.15    # 最大明度を保持する時間
+        brightness_decay_s = 3.0    # 暗くなるまでの時間
+        brightness_min = 0.3        # 最小明度（30%）
         
         # ★改善：モード開始時の初期化チェック
         if not hasattr(mode_menu, 'shimmer_initialized') or not mode_menu.shimmer_initialized:
@@ -2643,6 +2650,11 @@ while True:
                 ag.drop_up_s = drop_up_s_n
                 ag.drop_total = drop_total_n
                 ag.drop_m = drop_m_norm
+                
+                # ★光量管理用の初期化
+                ag.brightness_start_time = -999.0
+                ag.target_brightness = brightness_min
+                ag.current_brightness = brightness_min
                 
                 print(f"  Agent {ag.node_id}: z={ag.shimmer_start_z:.2f}→{ag.shimmer_default_z}, "
                       f"yaw={ag.shimmer_start_yaw:.1f}, pitch={ag.shimmer_start_pitch:.1f}")
@@ -2746,7 +2758,7 @@ while True:
                 # ジオメトリ更新
                 update_geometry(ag)
                 
-                # 色を適用
+                # 色を適用（筒も含む）
                 ag.body.color = ag.current_color
                 for ld3, ld2, _ in ag.leds:
                     ld3.color = ld2.color = ag.current_color
@@ -2779,6 +2791,11 @@ while True:
                 ag.drop_up_s   = drop_up_s_n
                 ag.drop_total  = drop_total_n
                 ag.drop_m      = drop_m_norm
+                
+                # ★光量管理用の初期化
+                ag.brightness_start_time = -999.0
+                ag.target_brightness = brightness_min
+                ag.current_brightness = brightness_min
 
             # (2) レアドロップ中は「波の判定」を受けないフラグを立てる
             if ag.drop_mode == "rare" and sim_time - ag.drop_time < drop_total_r:
@@ -2940,19 +2957,33 @@ while True:
             else:
                 base_col = ag.color_to
 
-            # ── フラッシュ（光る）演出 ───────────────────────────────────────
-            f_age = sim_time - ag.drop_time
-            if 0 <= f_age <= flash_rise_s + flash_decay_s:
-                if f_age <= flash_rise_s:
-                    r = f_age / flash_rise_s
-                else:
-                    r = 1 - (f_age - flash_rise_s) / flash_decay_s
-                mix = white_mix_peak * r
-                inc = 1 + bright_peak * r
-                col = (base_col * (1 - mix) + vector(1, 1, 1) * mix) * inc
-                col = vector(min(1, col.x), min(1, col.y), min(1, col.z))
+            # ★新しい光量システム
+            time_since_brightness_start = sim_time - ag.brightness_start_time
+            
+            if time_since_brightness_start < 0:
+                # まだ開始していない
+                ag.current_brightness = brightness_min
+            elif time_since_brightness_start < brightness_rise_s:
+                # 明るくなるフェーズ（イージング）
+                t = time_since_brightness_start / brightness_rise_s
+                # easeOutCubic
+                t = 1 - pow(1 - t, 3)
+                ag.current_brightness = brightness_min + (1.0 - brightness_min) * t
+            elif time_since_brightness_start < brightness_rise_s + brightness_hold_s:
+                # 最大明度を保持
+                ag.current_brightness = 1.0
+            elif time_since_brightness_start < brightness_rise_s + brightness_hold_s + brightness_decay_s:
+                # 暗くなるフェーズ
+                t = (time_since_brightness_start - brightness_rise_s - brightness_hold_s) / brightness_decay_s
+                # 線形減衰
+                ag.current_brightness = 1.0 - (1.0 - brightness_min) * t
             else:
-                col = base_col
+                # 完全に暗くなった
+                ag.current_brightness = brightness_min
+
+            # 色に明度を適用
+            col = base_col * ag.current_brightness
+            col = vector(min(1, col.x), min(1, col.y), min(1, col.z))
 
             ag.current_color = col
 
@@ -2979,6 +3010,9 @@ while True:
             ag.prev_z = ag.z  # 次フレーム用に保存
             
             update_geometry(ag)
+            
+            # ★筒の色も更新
+            ag.body.color = ag.current_color
             for l3, l2, _ in ag.leds:
                 l3.color = l2.color = ag.current_color
 
@@ -3045,6 +3079,9 @@ while True:
                     ag.color_from = ag.current_color
                     ag.color_to = wcol * 0.5
                     ag.color_t0 = sim_time
+                    
+                    # ★光量システムの開始
+                    ag.brightness_start_time = sim_time
 
                     # ────────────────────────────────────────────────────────────
                 else:
