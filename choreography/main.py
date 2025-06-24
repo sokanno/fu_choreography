@@ -112,7 +112,7 @@ current_sine_freq = target_sine_freq
 # ========================================================
 # 回る天井モード用パラメータ
 # ========================================================
-tilt_angle_deg   = 10.0    # 平面の傾き（°）
+tilt_angle_deg   = 4.0    # 平面の傾き（°）
 plane_rot_speed  = 0.3     # 回転速度（rad/s）
 plane_angle      = 0.0     # フレームごとに増加
 plane_height     = 2.5     # 平面中心の高さ
@@ -153,7 +153,7 @@ oni_target_color    = vector(1,1,1)  # 2 秒後に向かう反対色
 #   False … ランダム歩行（既存）
 #   True  … MQTT “ca” 座標で直接配置（センサーモード）
 # --------------------------------------------------------
-sensor_mode         = False         # ← 変更なし
+sensor_mode         = True         # ← 変更なし
 sensor_people: list['Audience'] = []   # ★ New: 複数人用リスト
 last_aud_msg_time   = -999.0
 PRESENCE_TIMEOUT    = 1.0           # 秒：信号が途絶えてから非表示まで
@@ -1423,7 +1423,7 @@ else:
 
 
 sim_time = noise_time = angle = 0.0
-dt = 1/20
+dt = 1/30
 current_groupA_idx = random.randrange(len(agents))
 prev_z_diff       = None
 epsilon           = 0.05   # 高さ差トリガーの許容幅
@@ -1435,7 +1435,7 @@ ease_color_speed = 1.0   # 1秒でどれだけ追いつくか（大きいほど�
 
 
 while True:
-    rate(20)
+    rate(30)
     if params["pause"] == 1.0:
         continue        # 一時停止中はループ先頭に戻る
     sim_time   += dt
@@ -1456,7 +1456,7 @@ while True:
     target_sine_amp      = params["sine_amplitude"]
     target_sine_freq     = params["sine_frequency"]
     color_speed          = params["color_speed"]
-    tilt_angle_deg       = params["tilt_angle"]
+    # tilt_angle_deg       = params["tilt_angle"]
     plane_rot_speed      = params["rotation_speed"]
     plane_height         = params["plane_height"]
     audience_count       = int(params["audience_count"])
@@ -1901,8 +1901,8 @@ while True:
             mode_menu.tenge_transition_duration = 2.0  # 2秒のトランジション
             
             # 初期パラメータ設定
-            mode_menu.tenge_amplitude = 0.35  # 初期振幅
-            mode_menu.tenge_speed = 1.0  # ラジアン/秒
+            mode_menu.tenge_amplitude = 0.20  # 初期振幅
+            mode_menu.tenge_speed = 0.7  # ラジアン/秒
             
             # ★Group B明度管理用の初期化
             mode_menu.groupb_brightness_start_time = sim_time
@@ -1954,9 +1954,9 @@ while True:
         # ─────────────────────────────────────────────
         # パラメータ設定
         # ─────────────────────────────────────────────
-        min_height = 2.0
-        max_height = 2.7
-        center_z = 2.35  # 中間点（すれ違いポイント）
+        min_height = 2.4
+        max_height = 2.75
+        center_z = 2.575 # 中間点（すれ違いポイント）
 
         # ─────────────────────────────────────────────
         # 1) 位相を進める（トランジション完了後のみ）
@@ -2019,8 +2019,8 @@ while True:
                 osc_client_max.send_message('/trig', int(selected_node_id))
                 # トランジション中はすぐに反映                
                 # ★天上天下モードのパラメータ、振幅と速度をランダムに設定
-                mode_menu.tenge_amplitude = random.uniform(0.05, 0.35)
-                mode_menu.tenge_speed = random.uniform(0.5, 1.25)
+                mode_menu.tenge_amplitude = random.uniform(0.05, 0.25)
+                mode_menu.tenge_speed = random.uniform(0.5, 0.8)
                 
                 # crossing が True なら新しい Group A が決まった直後
                 if crossing or not hasattr(mode_menu, "groupa_color"):
@@ -2433,12 +2433,12 @@ while True:
                                 ag.j*waveScale + sim_time*0.3)
                 
                 # 人との距離に基づいて振幅と中心高さを計算
-                min_amplitude = 0.15
-                max_amplitude = 0.3
+                min_amplitude = 0.1
+                max_amplitude = 0.2
                 avoid_radius = 1.5
                 
-                base_height_with_person = 2.5
-                base_height_without_person = 2.3
+                base_height_with_person = 2.6
+                base_height_without_person = 2.5
                 
                 # 各観客からの影響を計算
                 amplitude_factor = 1.0
@@ -2553,7 +2553,7 @@ while True:
                     t = flicker_age / flicker_duration
                     intensity = math.sin(t * math.pi)
                     # max_intensity = 0.3 if not in_transition else 0.3 * eased_progress
-                    max_intensity = 0.07 if not in_transition else 0.07 * eased_progress
+                    max_intensity = 0.03 if not in_transition else 0.03 * eased_progress
                     ag.downlight_brightness = intensity * max_intensity
                 else:
                     # トランジション中は徐々に消灯
