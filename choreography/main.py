@@ -2590,12 +2590,13 @@ while True:
         yaw_decay_tau = 0.8
 
         drop_m_norm   = 0.15
-        drop_down_s_n = 0.2
-        drop_up_s_n   = 1.0
+        # drop_down_s_n = 0.2
+        drop_down_s_n = 0.61   # 0.15m ÷ 0.61秒 ≈ 0.245m/s
+        drop_up_s_n   = 1.5
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
         rare_prob     = 0.0 # was 0.002
-        rare_factor   = 6
+        rare_factor   = 3
         drop_m_rare   = drop_m_norm * rare_factor
         drop_down_s_r = drop_down_s_n * rare_factor
         drop_up_s_r   = drop_up_s_n   * rare_factor
@@ -2614,8 +2615,8 @@ while True:
         # ★新しい光量パラメータ
         brightness_rise_s = 0.35    # 明るくなるまでの時間
         brightness_hold_s = 0.15    # 最大明度を保持する時間
-        brightness_decay_s = 3.0    # 暗くなるまでの時間
-        brightness_min = 0.3        # 最小明度（30%）
+        brightness_decay_s = 2.0    # 暗くなるまでの時間
+        brightness_min = 0.4        # 最小明度（30%）
         
         # ★改善：モード開始時の初期化チェック
         if not hasattr(mode_menu, 'shimmer_initialized') or not mode_menu.shimmer_initialized:
@@ -3078,7 +3079,7 @@ while True:
                     if not closest:
                         ag.actual_face_dir = wdir
                     ag.color_from = ag.current_color
-                    ag.color_to = wcol * 0.5
+                    ag.color_to = wcol
                     ag.color_t0 = sim_time
                     
                     # ★光量システムの開始
