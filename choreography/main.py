@@ -1423,7 +1423,7 @@ else:
 
 
 sim_time = noise_time = angle = 0.0
-dt = 1/30
+dt = 1/20
 current_groupA_idx = random.randrange(len(agents))
 prev_z_diff       = None
 epsilon           = 0.05   # 高さ差トリガーの許容幅
@@ -1435,7 +1435,7 @@ ease_color_speed = 1.0   # 1秒でどれだけ追いつくか（大きいほど�
 
 
 while True:
-    rate(30)
+    rate(20)
     if params["pause"] == 1.0:
         continue        # 一時停止中はループ先頭に戻る
     sim_time   += dt
