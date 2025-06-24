@@ -1954,9 +1954,9 @@ while True:
         # ─────────────────────────────────────────────
         # パラメータ設定
         # ─────────────────────────────────────────────
-        min_height = 2.4
-        max_height = 2.75
-        center_z = 2.575 # 中間点（すれ違いポイント）
+        min_height = 2.35  # 最低高さ
+        max_height = 2.7
+        center_z = 2.525 # 中間点（すれ違いポイント）
 
         # ─────────────────────────────────────────────
         # 1) 位相を進める（トランジション完了後のみ）
@@ -2563,6 +2563,7 @@ while True:
                         ag.downlight_brightness = 0.0
                 
                 # ダウンライト表示更新
+                # if time_since_transition < (wave_ramp_duration + 3.0):
                 update_downlight_display(ag)
             
             # ========================================================
@@ -2635,7 +2636,7 @@ while True:
                 # デフォルトの正位置を設定
                 ag.shimmer_default_z = 2.7  # シマーモードの基準高さ
                 ag.shimmer_default_pitch = 0.0
-                ag.shimmer_default_color = vector(0.5, 0.5, 0.0)  # 黄色系
+                ag.shimmer_default_color = vector(0.1, 0.1, 0.1)  # 黄色系
                 
                 # シマーモード用の初期化
                 ag.yaw0 = ag.yaw
@@ -2982,7 +2983,13 @@ while True:
             else:
                 # 完全に暗くなった
                 ag.current_brightness = brightness_min
-
+                # ★★★ ここに追加 ★★★
+                # 待機時の明滅（Z軸の動きと連動）
+                brightness_wave = math.sin(2*math.pi*shim_base_freq_hz*sim_time + ag.idx*0.7)
+                # ±0.05の範囲で変動
+                ag.current_brightness = brightness_min + brightness_wave * 0.05
+                # 範囲を制限（0.0〜1.0）
+                ag.current_brightness = max(0.0, min(1.0, ag.current_brightness))
             # 色に明度を適用
             col = base_col * ag.current_brightness
             col = vector(min(1, col.x), min(1, col.y), min(1, col.z))
