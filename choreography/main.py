@@ -307,6 +307,7 @@ modes = ["マニュアルモード",
          "蜂シマーモード",
          "天上天下モード",
          "回る天井"]
+        #  "舞台挨拶モード"]
 mode_menu = menu(
     choices=modes,
     index=0,
@@ -3191,6 +3192,280 @@ while True:
                                 ag.current_color.y,
                                 ag.current_color.z)
             send_queue.put(ag)
+    
+
+    # ─── 舞台挨拶モード ────────────────────────────────
+    elif mode_menu.selected == "舞台挨拶モード":
+        # ========================================================
+        # 舞台挨拶モードの初期化
+        # ========================================================
+        if not hasattr(mode_menu, 'greeting_initialized') or not mode_menu.greeting_initialized:
+            print(f"[舞台挨拶モード] 初期化開始")
+            mode_menu.greeting_initialized = True
+            mode_menu.greeting_start_time = sim_time
+            
+            # シーケンス管理用の変数
+            mode_menu.greeting_phase = "move_up"  # 現在のフェーズ
+            mode_menu.phase_start_time = sim_time
+            mode_menu.spotlight_29_brightness = 0.0
+            mode_menu.others_spotlight_triggered = False
+            mode_menu.spotlight_index = 1  # ID1から開始
+            mode_menu.last_spotlight_time = 0
+            
+            # 各エージェントの初期状態を保存
+            for ag in agents:
+                ag.greeting_start_z = ag.z
+                ag.greeting_start_yaw = ag.yaw
+                ag.greeting_start_pitch = ag.pitch
+                ag.greeting_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
+                ag.greeting_led_brightness = 0.0
+                ag.greeting_hue = 0.0
+                ag.greeting_rotation_start = 0
+                
+                # 初期化
+                ag.autonomous_mode = False
+                ag.pitch = 0
+                ag.actual_pitch = 0
+                ag.downlight_brightness = 0.0  # ダウンライト初期化
+                
+                print(f"  Agent {ag.node_id}: z={ag.greeting_start_z:.2f}→2.7m")
+        
+        # 他のモードの初期化フラグをリセット
+        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "舞台挨拶モード":
+            mode_menu.fish_mode_initialized = False
+            mode_menu.shimmer_initialized = False
+            mode_menu.ceiling_mode_initialized = False
+            mode_menu.tenge_initialized = False
+        
+        # 現在時刻と経過時間
+        current_time = sim_time
+        phase_elapsed = current_time - mode_menu.phase_start_time
+        
+        # ========================================================
+        # フェーズ管理とシーケンス処理
+        # ========================================================
+        
+        # フェーズ1: 全員2.7mまで移動（1秒）
+        if mode_menu.greeting_phase == "move_up":
+            move_duration = 1.0
+            if phase_elapsed < move_duration:
+                # イージング（easeInOutCubic）
+                t = phase_elapsed / move_duration
+                if t < 0.5:
+                    eased_t = 4 * t * t * t
+                else:
+                    eased_t = 1 - pow(-2 * t + 2, 3) / 2
+                
+                # 全員を2.7mへ移動
+                for ag in agents:
+                    ag.z = ag.greeting_start_z + (2.7 - ag.greeting_start_z) * eased_t
+                    # 全照灯
+                    ag.current_color = vector(0, 0, 0)
+            else:
+                # フェーズ完了
+                for ag in agents:
+                    ag.z = 2.7
+                mode_menu.greeting_phase = "wait_3sec"
+                mode_menu.phase_start_time = current_time
+                print("[舞台挨拶] フェーズ1完了: 全員2.7mに到達")
+        
+        # フェーズ2: 3秒待機
+        elif mode_menu.greeting_phase == "wait_3sec":
+            if phase_elapsed >= 3.0:
+                mode_menu.greeting_phase = "id29_descend"
+                mode_menu.phase_start_time = current_time
+                print("[舞台挨拶] フェーズ2完了: 3秒待機終了")
+        
+        # フェーズ3: ID29が2.4mまで下降（2秒）
+        elif mode_menu.greeting_phase == "id29_descend":
+            descend_duration = 2.0
+            if phase_elapsed < descend_duration:
+                # イージング
+                t = phase_elapsed / descend_duration
+                if t < 0.5:
+                    eased_t = 4 * t * t * t
+                else:
+                    eased_t = 1 - pow(-2 * t + 2, 3) / 2
+                
+                # ID29のみ下降
+                for ag in agents:
+                    if ag.node_id == 29:
+                        ag.z = 2.7 - (2.7 - 2.4) * eased_t
+                        # ダウンライトのフェードイン
+                        # ag.downlight_brightness = t  # 線形で0→1.0
+            else:
+                # フェーズ完了
+                for ag in agents:
+                    if ag.node_id == 29:
+                        ag.z = 2.4
+                        ag.downlight_brightness = 1.0
+                mode_menu.greeting_phase = "id29_rotate"
+                mode_menu.phase_start_time = current_time
+                
+                # 回転開始時刻を記録
+                for ag in agents:
+                    if ag.node_id == 29:
+                        ag.greeting_rotation_start = current_time
+                print("[舞台挨拶] フェーズ3完了: ID29が2.4mに到達")
+        
+        # フェーズ4: ID29が回転（4秒）
+        elif mode_menu.greeting_phase == "id29_rotate":
+            rotate_duration = 4.0
+            if phase_elapsed < rotate_duration:
+                for ag in agents:
+                    if ag.node_id == 29:
+                        # 1回転/秒で4秒 = 4回転 = 1440度
+                        ag.yaw = (ag.greeting_start_yaw + 360 * phase_elapsed) % 360
+                        ag.downlight_brightness = 1.0  # ダウンライトは常に点灯
+                        # LED制御
+                        if phase_elapsed < 0.5:
+                            # 最初の0.5秒でフェードイン（イージング）
+                            t = phase_elapsed / 0.5
+                            t = 1 - pow(1 - t, 3)  # easeOutCubic
+                            ag.greeting_led_brightness = t
+                        elif phase_elapsed < rotate_duration - 0.5:
+                            # 維持
+                            ag.greeting_led_brightness = 1.0
+                        else:
+                            # 最後の0.5秒でフェードアウト
+                            t = (phase_elapsed - (rotate_duration - 0.5)) / 0.5
+                            ag.greeting_led_brightness = 1.0 - t
+                        
+                        # Hueの変化（2秒で0→1を繰り返す）
+                        ag.greeting_hue = (phase_elapsed / 2.0) % 1.0
+                        
+                        # HSVからRGBへ変換して適用
+                        r, g, b = colorsys.hsv_to_rgb(ag.greeting_hue, 1.0, ag.greeting_led_brightness)
+                        ag.current_color = vector(r, g, b)
+            else:
+                # フェーズ完了
+                for ag in agents:
+                    if ag.node_id == 29:
+                        ag.yaw = ag.greeting_start_yaw
+                        ag.current_color = vector(0, 0, 0)  # 消灯
+                mode_menu.greeting_phase = "others_spotlight"
+                mode_menu.phase_start_time = current_time
+                print("[舞台挨拶] フェーズ4完了: ID29の回転終了")
+        
+        # フェーズ5: 他のIDにスポットライト（0.05秒ごと）
+        elif mode_menu.greeting_phase == "others_spotlight":
+            # ID1から順に、ID29を飛ばして、0.05秒ごとにID46まで
+            if current_time - mode_menu.last_spotlight_time >= 0.015:
+                # 次のIDを探す
+                while mode_menu.spotlight_index <= 46:
+                    if mode_menu.spotlight_index != 29:
+                        # 該当IDのエージェントを探してダウンライトを設定
+                        for ag in agents:
+                            if ag.node_id == mode_menu.spotlight_index:
+                                ag.downlight_brightness = 0.02
+                                break
+                        print(f"[舞台挨拶] ダウンライト: ID{mode_menu.spotlight_index}")
+                        mode_menu.last_spotlight_time = current_time
+                        mode_menu.spotlight_index += 1
+                        break
+                    else:
+                        mode_menu.spotlight_index += 1
+                
+                # 全て送信完了
+                if mode_menu.spotlight_index > 46:
+                    mode_menu.greeting_phase = "wait_2sec"
+                    mode_menu.phase_start_time = current_time
+                    print("[舞台挨拶] フェーズ5完了: 全スポットライト送信完了")
+        
+        # フェーズ6: 2秒待機
+        elif mode_menu.greeting_phase == "wait_2sec":
+            if phase_elapsed >= 2.0:
+                mode_menu.greeting_phase = "id29_ascend"
+                mode_menu.phase_start_time = current_time
+                print("[舞台挨拶] フェーズ6完了: 2秒待機終了")
+        
+        # フェーズ7: ID29が2.7mまで戻る（2秒）
+        elif mode_menu.greeting_phase == "id29_ascend":
+            ascend_duration = 2.0
+            if phase_elapsed < ascend_duration:
+                # イージング
+                t = phase_elapsed / ascend_duration
+                if t < 0.5:
+                    eased_t = 4 * t * t * t
+                else:
+                    eased_t = 1 - pow(-2 * t + 2, 3) / 2
+                
+                # ID29のみ上昇
+                for ag in agents:
+                    if ag.node_id == 29:
+                        ag.z = 2.4 + (2.7 - 2.4) * eased_t
+                        # ダウンライトのフェードアウト（1.0→0.1）
+                        ag.downlight_brightness = 1.0 - 0.9 * t
+            else:
+                # フェーズ完了
+                for ag in agents:
+                    if ag.node_id == 29:
+                        ag.z = 2.7
+                        ag.downlight_brightness = 0.1
+                mode_menu.greeting_phase = "final_wait"
+                mode_menu.phase_start_time = current_time
+                print("[舞台挨拶] フェーズ7完了: ID29が2.7mに到達")
+        
+        # フェーズ8: 1.5秒待って全消灯
+        elif mode_menu.greeting_phase == "final_wait":
+            if phase_elapsed < 1.5:
+                # 待機中（全員白色照明）
+                for ag in agents:
+                    if ag.node_id != 29:  # ID29は既に消灯
+                        ag.current_color = vector(0, 0, 0)
+            else:
+                # 全消灯
+                for ag in agents:
+                    ag.current_color = vector(0, 0, 0)
+                    ag.downlight_brightness = 0.0  # 全ダウンライトも消灯
+                
+                mode_menu.greeting_phase = "complete"
+                print("[舞台挨拶] 完了: 全消灯")
+        
+        # ========================================================
+        # ダウンライトの初期値設定
+        # ========================================================
+        # 各エージェントのダウンライト値を確実に設定
+        for ag in agents:
+            # downlight_brightnessが設定されていない場合は0.0を設定
+            if not hasattr(ag, 'downlight_brightness'):
+                ag.downlight_brightness = 0.0
+        
+        # ========================================================
+        # ジオメトリ更新と表示
+        # ========================================================
+        for ag in agents:
+            # 自律モード表示を更新（常にオフ）
+            ag.autonomous_mode = False
+            ag.update_autonomous_indicator()
+            
+            # ジオメトリ更新
+            axis = ag.compute_axis() * agent_length
+            ctr = vector(ag.x, ag.y, ag.z)
+            ag.body.pos = ctr - axis/2
+            ag.body.axis = axis
+            ag.cable.pos = ctr
+            ag.cable.axis = vector(0, 0, maxZ - ag.z)
+            
+            # LEDを筒と一緒に動かす
+            u = axis.norm()
+            for ld3, ld2, offset in ag.leds:
+                ld3.pos = ctr + u * (agent_length * offset)
+                ld2.pos = vector(
+                    ag.x + u.x * (agent_length * offset),
+                    ag.y + u.y * (agent_length * offset),
+                    0
+                )
+            
+            # 色を適用
+            ag.body.color = ag.current_color
+            for ld3, ld2, _ in ag.leds:
+                ld3.color = ld2.color = ag.current_color
+            
+            # 描画 & MQTT 送信
+            ag.display()
+            send_queue.put(ag)
+
 
     # メインループの既存のelif文の後に追加：
     elif mode_menu.selected == "マニュアルモード":
@@ -3243,3 +3518,6 @@ while True:
     
     if mode_menu.selected != "天上天下モード":
         mode_menu.tenge_initialized = False
+    
+    if mode_menu.selected != "舞台挨拶モード":
+        mode_menu.greeting_initialized = False
