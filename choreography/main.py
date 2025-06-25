@@ -1642,14 +1642,14 @@ while True:
                     'direction': direction,
                     'speed': random.uniform(5.0, 10.0), # was  (1.5, 3.0)
                     'width': random.uniform(3.0, 10.0),
-                    'intensity': random.uniform(1.0, 2.0),  # 強度を上げる(0.5, 0.8),  # 強度を上げる
+                    'intensity': random.uniform(0.5, 1.0),  # 強度を上げる(0.5, 0.8),  # 強度を上げる
                     'start_time': sim_time,
                     'duration': 15.0  # 15秒で消える
                 }
                 mode_menu.shadow_waves.append(shadow_wave)
                 
                 # 次の影の発生時刻
-                mode_menu.next_shadow_time = sim_time + random.uniform(1.0, 5.0)
+                mode_menu.next_shadow_time = sim_time + random.uniform(0.5, 3.0)
                 print(f"[影の波] 発生 from {edge_choice}, intensity={shadow_wave['intensity']:.2f}, "
                       f"width={shadow_wave['width']:.1f}, speed={shadow_wave['speed']:.1f}")
             
@@ -1911,6 +1911,12 @@ while True:
             mode_menu.groupb_prev_brightness = 0.5
             mode_menu.groupb_hue_offset = 0.0      # 0–1 の範囲で回転
             mode_menu.groupb_hue_speed  = 0.001     # rad/s 相当（好みで）  
+
+            # ★バリエーション管理用の初期化（追加）
+            mode_menu.crossing_count = 0  # すれ違い回数カウント
+            mode_menu.variation_pattern = "normal"  # normal, random, slope
+            mode_menu.slope_angle = 0.0  # 傾斜の方向（ラジアン）
+            mode_menu.variation_start_time = sim_time
             
             # モード切り替え検出
             if not hasattr(mode_menu, 'last_crossing_phase'):
@@ -2010,6 +2016,23 @@ while True:
                     mode_menu.last_crossing_phase = phase_a
             
             if crossing:
+                # すれ違い回数をカウント
+                mode_menu.crossing_count = getattr(mode_menu, 'crossing_count', 0) + 1
+                
+                # 2-4回に1回バリエーションを発動
+                variation_interval = random.randint(2, 4)
+                if mode_menu.crossing_count % variation_interval == 0:
+                    # パターンをランダムに選択
+                    mode_menu.variation_pattern = random.choice(["random", "slope"])
+                    mode_menu.variation_start_time = sim_time
+                    
+                    if mode_menu.variation_pattern == "slope":
+                        # 傾斜の方向をランダムに決定
+                        mode_menu.slope_angle = random.uniform(0, 2 * math.pi)
+                    
+                    print(f"バリエーション発動: {mode_menu.variation_pattern}")
+                else:
+                    mode_menu.variation_pattern = "normal"
                 # 新しいGroup Aを選択
                 choices = list(range(len(agents)))
                 choices.remove(current_groupA_idx)
@@ -2107,7 +2130,46 @@ while True:
                 if new_group == "A":
                     ag.z = target_z_a
                 else:
-                    ag.z = target_z_b
+                    # ag.z = target_z_b
+                    # ★Group Bのバリエーション処理
+                    variation = getattr(mode_menu, 'variation_pattern', 'normal')
+                    phase = ag.tenge_phase
+                    
+                    if variation == "random":
+                        # パターン1: 個別の振幅
+                        if not hasattr(ag, 'tenge_amplitude'):
+                            ag.tenge_amplitude = random.uniform(0.05, 0.25)
+                        
+                        # すれ違いポイントでシンクロするように計算
+                        individual_amplitude = ag.tenge_amplitude
+                        # cosが0になる時（すれ違い時）は全員center_zになる
+                        ag.z = center_z - individual_amplitude * math.cos(phase)
+                        
+                    elif variation == "slope":
+                        # パターン2: 傾斜
+                        # エージェントの位置から傾斜方向への距離を計算
+                        slope_dir_x = math.cos(mode_menu.slope_angle)
+                        slope_dir_y = math.sin(mode_menu.slope_angle)
+                        
+                        # 中心からの符号付き距離
+                        dist_from_center = (ag.x - centerX) * slope_dir_x + (ag.y - centerY) * slope_dir_y
+                        max_dist = 5.0  # 最大距離（調整可能）
+                        normalized_dist = max(-1, min(1, dist_from_center / max_dist))
+                        
+                        # 距離に応じた振幅（0.05〜0.25）
+                        base_amp = 0.15
+                        amp_variation = 0.10
+                        individual_amplitude = base_amp + amp_variation * normalized_dist
+                        
+                        # すれ違いポイントでシンクロ
+                        ag.z = center_z - individual_amplitude * math.cos(phase)
+                        
+                    else:  # normal
+                        # 通常のGroup B動作
+                        ag.z = target_z_b
+                        # バリエーション用の個別振幅をリセット
+                        if hasattr(ag, 'tenge_amplitude'):
+                            delattr(ag, 'tenge_amplitude')
             
             # グループ変更の処理
             if new_group != getattr(ag, "group", None):
@@ -2596,7 +2658,7 @@ while True:
         drop_up_s_n   = 1.5
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
-        rare_prob     = 0.0 # was 0.002
+        rare_prob     = 0.01 # was 0.002
         rare_factor   = 3
         drop_m_rare   = drop_m_norm * rare_factor
         drop_down_s_r = drop_down_s_n * rare_factor
@@ -2689,8 +2751,23 @@ while True:
         
         # --- 2) 波発生処理（トランジション完了後のみ） ---
         if not in_transition and sim_time >= next_shim_time:
+
+            # ★前回の波の色相を初期化（最初の1回目）
+            if not hasattr(mode_menu, 'last_wave_hue'):
+                mode_menu.last_wave_hue = random.random()
             # 波の色・震源ノード・進行方向を決定
-            hue = random.random()
+            # hue = random.random()
+            # ★前回の色相から±0.2以内で変化
+            hue_change = random.uniform(-0.175, 0.175)
+            hue = mode_menu.last_wave_hue + hue_change
+            
+            # 0-1の範囲に収める（ラップアラウンド）
+            hue = hue % 1.0
+            if hue < 0:
+                hue += 1.0
+            
+            # 新しい色相を保存
+            mode_menu.last_wave_hue = hue
             r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
             wave_col = vector(r, g, b)
 
