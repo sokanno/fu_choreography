@@ -2759,7 +2759,7 @@ while True:
             # 波の色・震源ノード・進行方向を決定
             # hue = random.random()
             # ★前回の色相から±0.2以内で変化
-            hue_change = random.uniform(-0.175, 0.175)
+            hue_change = random.uniform(-0.225, 0.225)
             hue = mode_menu.last_wave_hue + hue_change
             
             # 0-1の範囲に収める（ラップアラウンド）
