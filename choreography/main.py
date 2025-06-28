@@ -1408,6 +1408,47 @@ def apply_manual_mode():
     if target_id > 0 and applied_count == 0 and random.random() < 0.05:  # 5%の確率で
         print(f"[Warning] No agent found with node_id={target_id}")
         print(f"[Warning] Available node_ids: {sorted([ag.node_id for ag in agents])}")
+
+# より汎用的な彩度調整関数（追加推奨）
+def reduce_saturation(color, factor=0.5):
+    """
+    RGB色の彩度を指定した係数で削減する
+    color: vector(r, g, b) - 0.0-1.0の範囲
+    factor: 彩度の係数（0.0-1.0、0.5で半分）
+    """
+    # RGB to HSV変換
+    r, g, b = color.x, color.y, color.z
+    max_val = max(r, g, b)
+    min_val = min(r, g, b)
+    
+    # 明度（Value）
+    v = max_val
+    
+    # 彩度（Saturation）
+    if max_val == 0:
+        s = 0
+    else:
+        s = (max_val - min_val) / max_val
+    
+    # 色相（Hue）
+    if max_val == min_val:
+        h = 0
+    elif max_val == r:
+        h = (60 * ((g - b) / (max_val - min_val)) + 360) % 360
+    elif max_val == g:
+        h = (60 * ((b - r) / (max_val - min_val)) + 120) % 360
+    else:
+        h = (60 * ((r - g) / (max_val - min_val)) + 240) % 360
+    
+    # 彩度を調整
+    s_new = s * factor
+    
+    # HSV to RGB変換
+    import colorsys
+    r_new, g_new, b_new = colorsys.hsv_to_rgb(h/360, s_new, v)
+    
+    return vector(r_new, g_new, b_new)
+
 # ========================================================
 # メインループ
 # ========================================================
@@ -2769,7 +2810,7 @@ while True:
             
             # 新しい色相を保存
             mode_menu.last_wave_hue = hue
-            r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
+            r, g, b = colorsys.hsv_to_rgb(hue, 0.5, 1) # 彩度 0.5, 明度 1.0
             wave_col = vector(r, g, b)
 
             ori = random.choice(agents)
@@ -3071,7 +3112,8 @@ while True:
             # 色に明度を適用
             col = base_col * ag.current_brightness
             col = vector(min(1, col.x), min(1, col.y), min(1, col.z))
-
+            # ★ここに彩度調整を追加
+            col = reduce_saturation(col, 0.75)  # 彩度を半分に
             ag.current_color = col
 
             # ── 近接観客強調 (通常ドロップのみ) ─────────────────────────────────
