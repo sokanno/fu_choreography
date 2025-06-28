@@ -1873,34 +1873,231 @@ while True:
             current_shadow = getattr(ag, 'shadow_factor', 0.0)
             ag.shadow_factor = current_shadow + (target_shadow - current_shadow) * min(1.0, dt * 3.0)
             
-            # (H) 色更新（トランジション対応）
-            global_hue = (sim_time * color_speed) % 1.0
+# (H) 色更新（空の演出バージョン）
+            # ★空の色彩サイクル（1日の空の変化）- 速度を半分に
+            cycle_time = sim_time * color_speed * 0.5
+            
+            # 1サイクルを1日として、0.0-1.0の時間として正規化
+            day_time = cycle_time % 1.0
+            
+            # 高さの比率（端から端への色変化を保持）
             height_ratio = (ag.z - minZp) / (maxZp - minZp) if maxZp != minZp else 0.5
             
-            # 特定IDのOSC送信
+            # ★空の色の定義（RGB値）
+            def get_sky_color(time_of_day, height_pos):
+                """
+                空の色を取得
+                time_of_day: 0.0-1.0 (0=深夜, 0.25=朝, 0.5=昼, 0.75=夕方)
+                height_pos: 0.0-1.0 (高度による色の変化)
+                """
+                
+                # 各時間帯の基本色（RGB値 0.0-1.0）
+                colors = {
+                    'deep_night': (0.02, 0.05, 0.15),      # 深い夜の青
+                    'night': (0.05, 0.1, 0.25),            # 夜の青
+                    'pre_dawn': (0.15, 0.2, 0.4),          # 夜明け前
+                    'dawn': (0.7, 0.4, 0.3),               # 朝焼け（オレンジ系）
+                    'morning': (0.4, 0.7, 0.9),            # 爽やかな朝の青
+                    'day': (0.3, 0.6, 1.0),                # 抜けるような青空
+                    'deep_ocean': (0.0, 0.1, 0.95),        # ★深海のような深い青（白みなし）
+                    'afternoon': (0.25, 0.5, 0.95),        # 午後の青空（深海から通常へ）
+                    'evening': (0.8, 0.3, 0.1),            # 夕焼け（青から直接赤系へ）
+                    'dusk': (0.2, 0.15, 0.4),              # 薄暮
+                }
+                
+                # 時間による色の補間
+                if time_of_day < 0.1:  # 深夜 0.0-0.1
+                    t = time_of_day / 0.1
+                    base_color = blend_colors(colors['deep_night'], colors['night'], t)
+                    
+                elif time_of_day < 0.2:  # 夜〜夜明け前 0.1-0.2
+                    t = (time_of_day - 0.1) / 0.1
+                    base_color = blend_colors(colors['night'], colors['pre_dawn'], t)
+                    
+                elif time_of_day < 0.25:  # 夜明け前〜朝焼け 0.2-0.25
+                    t = (time_of_day - 0.2) / 0.05
+                    base_color = blend_colors(colors['pre_dawn'], colors['dawn'], t)
+                    
+                elif time_of_day < 0.3:  # 朝焼け〜朝 0.25-0.3
+                    t = (time_of_day - 0.25) / 0.05
+                    base_color = blend_colors(colors['dawn'], colors['morning'], t)
+                    
+                elif time_of_day < 0.45:  # 朝〜昼 0.3-0.45
+                    t = (time_of_day - 0.3) / 0.15
+                    base_color = blend_colors(colors['morning'], colors['day'], t)
+                    
+                elif time_of_day < 0.55:  # 昼〜深海ブルー 0.45-0.55 ★
+                    t = (time_of_day - 0.45) / 0.1
+                    base_color = blend_colors(colors['day'], colors['deep_ocean'], t)
+                    
+                elif time_of_day < 0.6:  # 深海ブルー〜午後 0.55-0.6 ★
+                    t = (time_of_day - 0.55) / 0.05
+                    base_color = blend_colors(colors['deep_ocean'], colors['afternoon'], t)
+                    
+                elif time_of_day < 0.65:  # 午後〜通常の昼 0.6-0.65 ★
+                    t = (time_of_day - 0.6) / 0.05
+                    base_color = blend_colors(colors['afternoon'], colors['day'], t)
+                    
+                elif time_of_day < 0.75:  # 昼〜夕方 0.65-0.75
+                    t = (time_of_day - 0.65) / 0.1
+                    base_color = blend_colors(colors['day'], colors['evening'], t)
+                    
+                elif time_of_day < 0.85:  # 夕方〜薄暮 0.75-0.85
+                    t = (time_of_day - 0.75) / 0.1
+                    base_color = blend_colors(colors['evening'], colors['dusk'], t)
+                    
+                else:  # 薄暮〜夜 0.85-1.0
+                    t = (time_of_day - 0.85) / 0.15
+                    base_color = blend_colors(colors['dusk'], colors['deep_night'], t)
+                
+                # 高度による微調整（地平線は暖色系、天頂は寒色系）
+                if 0.2 <= time_of_day <= 0.8:  # 昼間のみ高度効果を適用
+                    # 深海ブルーの時間帯は高度効果を弱める
+                    if 0.45 <= time_of_day <= 0.6:
+                        effect_strength = 0.3  # 効果を30%に弱める
+                    else:
+                        effect_strength = 1.0
+                        
+                    # 天頂ほど青く、地平線ほど暖色に
+                    horizon_tint = (0.1 * effect_strength, 0.05 * effect_strength, 0.0)
+                    zenith_tint = (0.0, 0.0, 0.1 * effect_strength)
+                    
+                    tint = blend_colors(horizon_tint, zenith_tint, height_pos)
+                    base_color = (
+                        min(1.0, base_color[0] + tint[0]),
+                        min(1.0, base_color[1] + tint[1]),
+                        min(1.0, base_color[2] + tint[2])
+                    )
+                
+                return base_color
+
+            def blend_colors(color1, color2, t):
+                """2つの色を線形補間"""
+                return (
+                    color1[0] * (1 - t) + color2[0] * t,
+                    color1[1] * (1 - t) + color2[1] * t,
+                    color1[2] * (1 - t) + color2[2] * t
+                )
+            
+            # 基本の空の色を取得
+            r, g, b = get_sky_color(day_time, height_ratio)
+            
+            # ★夜の演出：自然でランダムな星効果
+            if 0.0 <= day_time <= 0.2 or 0.85 <= day_time <= 1.0:  # 夜時間帯
+                # 各ロボットに対して完全にランダムな星の瞬き
+                import random
+                import math
+                
+                # 各ロボットが最後に光った時刻を記録（初期化）
+                if not hasattr(ag, 'last_star_time'):
+                    ag.last_star_time = -10.0  # 十分に過去の時刻で初期化
+                
+                # 最後に光ってから一定時間経過していることを確認（同じロボットが連続しないように）
+                time_since_last_star = sim_time - ag.last_star_time
+                
+                if time_since_last_star > 0.3:  # 最低2秒は間隔を空ける
+                    # フレームごとにランダムに光るかどうか決定
+                    # 全体的な発生頻度を調整（値を小さくするとより頻繁に光る）
+                    star_probability = 0.1 # 0.5%の確率で光り始める
+                    
+                    # node_idとsim_timeを使った擬似ランダム値
+                    # 毎フレーム異なる値になるようにする
+                    pseudo_random = abs(math.sin(sim_time * 137.5 + ag.node_id * 23.7))
+                    frame_random = abs(math.sin(sim_time * 1000.0 + ag.node_id * 100.0))
+                    
+                    # この瞬間に光るかどうかの判定
+                    if frame_random < star_probability:
+                        # 光ることが決定したら、光り始めの時刻を記録
+                        ag.star_flash_start = sim_time
+                        ag.last_star_time = sim_time
+                        ag.is_flashing = True
+                        # 各星の明るさをランダムに設定
+                        ag.star_brightness = random.uniform(0.004, 0.008)
+                
+                # 光っている最中の処理
+                if hasattr(ag, 'is_flashing') and ag.is_flashing:
+                    flash_elapsed = sim_time - ag.star_flash_start
+                    flash_duration = 0.1  # 0.2秒のフラッシュ
+                    
+                    if flash_elapsed < flash_duration:
+                        # フェードイン・フェードアウトのカーブ
+                        if flash_elapsed < flash_duration * 0.3:  # 30%でフェードイン
+                            flash_intensity = flash_elapsed / (flash_duration * 0.3)
+                        elif flash_elapsed < flash_duration * 0.7:  # 40%維持
+                            flash_intensity = 1.0
+                        else:  # 30%でフェードアウト
+                            flash_intensity = (flash_duration - flash_elapsed) / (flash_duration * 0.3)
+                        
+                        # スムーズなカーブのためにイージング関数を適用
+                        flash_intensity = flash_intensity * flash_intensity * (3.0 - 2.0 * flash_intensity)
+                        
+                        # 星の明度
+                        star_intensity = ag.star_brightness * flash_intensity
+                        
+                        # 星の色（薄い白〜青白）
+                        r += star_intensity
+                        g += star_intensity * 0.95
+                        b += star_intensity * 1.05
+                        
+                        # ダウンライトの明度を設定
+                        ag.downlight_brightness = star_intensity * 0.7  # ダウンライトは控えめに
+                    else:
+                        # フラッシュ終了
+                        ag.is_flashing = False
+                        ag.downlight_brightness = 0.0
+                else:
+                    ag.downlight_brightness = 0.0
+            else:
+                # 昼間はダウンライトオフ
+                ag.downlight_brightness = 0.0
+                # フラッシュ状態もリセット
+                if hasattr(ag, 'is_flashing'):
+                    ag.is_flashing = False
+            
+            # 特定IDのOSC送信（空の時間情報も追加）
             if ag.node_id == 1:        
                 osc_client_max.send_message('/id1/z', ag.z)
+                osc_client_max.send_message('/sky_time', day_time)
             if ag.node_id == 46:
                 osc_client_max.send_message('/id46/z', ag.z)
             
-            # 目標色の計算
-            hue = (global_hue + height_ratio * 0.125) % 1.0
-            brightness = 1.0 - 0.5 * height_ratio
-            r, g, b = colorsys.hsv_to_rgb(hue, 1.0, brightness)
-            osc_client_max.send_message('/hue', hue)
-            
-            # ★影エフェクトを適用（明度を下げる）
+            # ★影エフェクトを適用（雲の影）
             if ag.shadow_factor > 0:
-                shadow_mult = 1.0 - ag.shadow_factor * 0.9  # 最大90%暗くなる（より強く）
+                # 時間帯によって影の色合いを変える
+                if 0.2 <= day_time <= 0.8:  # 昼間
+                    shadow_mult = 1.0 - ag.shadow_factor * 0.7  # 昼間の雲影
+                else:  # 夜間
+                    shadow_mult = 1.0 - ag.shadow_factor * 0.9  # 夜間はより強く暗く
+                
                 r *= shadow_mult
                 g *= shadow_mult
                 b *= shadow_mult
                 
                 # デバッグ：強い影が発生している場合
                 if ag.shadow_factor > 0.3:
-                    print(f"Agent {ag.node_id}: shadow_factor={ag.shadow_factor:.2f}, mult={shadow_mult:.2f}")
+                    time_str = "night" if (day_time < 0.2 or day_time > 0.8) else "day"
+                    print(f"Agent {ag.node_id}: shadow_factor={ag.shadow_factor:.2f}, "
+                          f"mult={shadow_mult:.2f}, time={time_str}")
             
-            target_color = vector(r, g, b)
+            # 最終的な色をクランプ
+            target_color = vector(min(1.0, r), min(1.0, g), min(1.0, b))
+            
+            # OSCで時間帯情報を送信（演出制御用）
+            if ag.node_id == 1:  # 代表として1つだけ送信
+                # 時間帯の文字列
+                if day_time < 0.2:
+                    time_phase = "night"
+                elif day_time < 0.3:
+                    time_phase = "dawn"
+                elif day_time < 0.65:
+                    time_phase = "day" 
+                elif day_time < 0.85:
+                    time_phase = "dusk"
+                else:
+                    time_phase = "night"
+                
+                osc_client_max.send_message('/sky_phase', time_phase)
+                osc_client_max.send_message('/day_time', day_time)
             
             # トランジション中の色補間
             if in_transition:
@@ -1920,8 +2117,6 @@ while True:
             
             # (I) MQTT送信
             send_queue.put(ag)
-
-
 
     # ─── 天上天下モード ────────────────────────────────
     elif mode_menu.selected == "天上天下モード":
