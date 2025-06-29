@@ -2737,7 +2737,7 @@ while True:
                 avoid_radius = 1.5
                 
                 base_height_with_person = 2.6
-                base_height_without_person = 2.5
+                base_height_without_person = 2.3
                 
                 # 各観客からの影響を計算
                 amplitude_factor = 1.0
@@ -2799,6 +2799,46 @@ while True:
                 # ========================================================
                 
                 # きらめきの周波数を徐々に上げる
+                # if in_transition:
+                #     # 0.1Hz（ゆっくり）から10Hz（速い）へ
+                #     target_frequency = 10.0
+                #     ag.fish_flicker_frequency = 0.1 + (target_frequency - 0.1) * eased_progress
+                    
+                #     # 色相の変化幅も徐々に増やす
+                #     hue_variation = 0.02 + 0.13 * eased_progress  # 0.02→0.15
+                #     brightness_variation = 0.05 + 0.25 * eased_progress  # 0.05→0.3
+                # else:
+                #     ag.fish_flicker_frequency = 10.0
+                #     hue_variation = 0.15
+                #     brightness_variation = 0.3
+                
+                # きらめきの計算（各エージェントの位相を使用）
+                # hue = (0.55 + steer.x  * hue_variation) % 1.0
+                # # hue = (0.55 + steer.x  * hue_variation) % 1.0
+
+                # flick = 0.7 + brightness_variation * math.sin(ag.fish_flicker_frequency * sim_time + ag.fish_flicker_phase)
+                
+                # # 明度を制限（暗くなりすぎない）
+                # flick = max(0.5, min(1.0, flick))
+                
+                # r, g, b = colorsys.hsv_to_rgb(hue, 0.8, flick)
+                # flicker_color = vector(r, g, b)
+                
+                # # トランジション中は基本色ときらめき色をブレンド
+                # if in_transition:
+                #     # きらめきの影響を徐々に強くする
+                #     blend_factor = eased_progress * 0.7  # 最大70%までブレンド
+                #     final_color = base_color * (1 - blend_factor) + flicker_color * blend_factor
+                # else:
+                #     final_color = flicker_color
+                
+                # ag.current_color = final_color
+                # X座標の正規化
+                # ========================================================
+                # LED色のきらめき（徐々に周波数を上げる）
+                # ========================================================
+                
+                # きらめきの周波数を徐々に上げる
                 if in_transition:
                     # 0.1Hz（ゆっくり）から10Hz（速い）へ
                     target_frequency = 10.0
@@ -2813,7 +2853,30 @@ while True:
                     brightness_variation = 0.3
                 
                 # きらめきの計算（各エージェントの位相を使用）
-                hue = (0.55 + steer.x * hue_variation) % 1.0
+                
+                # X座標に基づくバイアスを計算
+                x_min = -6.0  # 実際の最小X座標に合わせて調整
+                x_max = 6.0   # 実際の最大X座標に合わせて調整
+                x_normalized = (ag.x - x_min) / (x_max - x_min)  # 0から1に正規化
+                
+                # 位置によるバイアス（-1から1の範囲）
+                # 左端で-1（緑寄り）、右端で+1（青寄り）
+                position_bias = (x_normalized - 0.5) * 2.0
+                
+                # steer.xと位置バイアスを組み合わせる
+                # 端に行くほど位置バイアスの影響を強くする
+                edge_strength = abs(position_bias)  # 0から1
+                
+                # 中央では steer.x の影響が強く、端では position_bias の影響が強い
+                combined_value = steer.x * (1.0 - edge_strength * 0.7) + position_bias * edge_strength * 0.8
+                
+                # -1から1の範囲にクリップ
+                combined_value = max(-1.0, min(1.0, combined_value))
+                
+                # 色相の計算（元の計算式を維持）
+                hue = (0.55 + combined_value * hue_variation) % 1.0
+                
+                # きらめきの明度計算
                 flick = 0.7 + brightness_variation * math.sin(ag.fish_flicker_frequency * sim_time + ag.fish_flicker_phase)
                 
                 # 明度を制限（暗くなりすぎない）
@@ -2895,8 +2958,8 @@ while True:
         drop_up_s_n   = 1.5
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
-        rare_prob     = 10.0 # was 0.002
-        rare_factor   = 15 # was 6 
+        rare_prob     = 0.03 # was 0.002
+        rare_factor   = 4 # was 6 
         drop_m_rare   = drop_m_norm * rare_factor
         drop_down_s_r = drop_down_s_n * rare_factor
         drop_up_s_r   = drop_up_s_n   * rare_factor
@@ -3005,7 +3068,7 @@ while True:
             
             # 新しい色相を保存
             mode_menu.last_wave_hue = hue
-            r, g, b = colorsys.hsv_to_rgb(hue, 0.5, 1) # 彩度 0.5, 明度 1.0
+            r, g, b = colorsys.hsv_to_rgb(hue, 0.4, 1) # 彩度 0.5, 明度 1.0
             wave_col = vector(r, g, b)
 
             ori = random.choice(agents)
