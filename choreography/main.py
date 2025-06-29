@@ -112,10 +112,10 @@ current_sine_freq = target_sine_freq
 # ========================================================
 # 回る天井モード用パラメータ
 # ========================================================
-tilt_angle_deg   = 5.5    # 平面の傾き（°）
+# tilt_angle_deg   = 5.5    # 平面の傾き（°）
 plane_rot_speed  = 0.3     # 回転速度（rad/s）
 plane_angle      = 0.0     # フレームごとに増加
-plane_height     = 2.5     # 平面中心の高さ
+# plane_height     = 2.5     # 平面中心の高さ
 
 # Audience の人数設定（0～10）
 audience_count = 2
@@ -1498,7 +1498,7 @@ while True:
     target_sine_amp      = params["sine_amplitude"]
     target_sine_freq     = params["sine_frequency"]
     color_speed          = params["color_speed"]
-    # tilt_angle_deg       = params["tilt_angle"]
+    # tilt_angle_deg       = params["tilt_angle_deg"]
     plane_rot_speed      = params["rotation_speed"]
     plane_height         = params["plane_height"]
     audience_count       = int(params["audience_count"])
@@ -1513,6 +1513,17 @@ while True:
     fish_coh_factor   = params["fish_coh"]
     fin_osc_amp_deg   = params["fin_amp"]
     fin_osc_freq_hz   = params["fin_freq"]
+    # 魚群
+    base_height_without_person = params["base_height_without_person"]
+    # シマー
+    rare_prob = params["rare_prob"]
+    rare_factor = params["rare_factor"]
+    # 回る天井
+    tilt_angle_deg = params["tilt_angle_deg"]
+    plane_height = params["plane_height"]
+    # 天上天下モード
+    min_height = params["min_height"]
+    center_z = params["center_z"]
     # デバッグ用：マニュアルモードのパラメータを確認（オプション）
     if mode_menu.selected == "マニュアルモード" and random.random() < 0.01:  # 1%の確率で
         manual_target = int(params.get("manual_target", 0))
@@ -1873,7 +1884,7 @@ while True:
             current_shadow = getattr(ag, 'shadow_factor', 0.0)
             ag.shadow_factor = current_shadow + (target_shadow - current_shadow) * min(1.0, dt * 3.0)
             
-# (H) 色更新（空の演出バージョン）
+            # (H) 色更新（空の演出バージョン）
             # ★空の色彩サイクル（1日の空の変化）- 速度を半分に
             cycle_time = sim_time * color_speed * 0.25
             
@@ -1901,7 +1912,7 @@ while True:
                     'day': (0.3, 0.6, 1.0),                # 抜けるような青空
                     'deep_ocean': (0.0, 0.1, 0.95),        # ★深海のような深い青（白みなし）
                     'afternoon': (0.25, 0.5, 0.95),        # 午後の青空（深海から通常へ）
-                    'evening': (0.8, 0.3, 0.1),            # 夕焼け（青から直接赤系へ）
+                    'evening': (0.8, 0.4, 0.1),            # 夕焼け（青から直接赤系へ）
                     'dusk': (0.2, 0.15, 0.4),              # 薄暮
                 }
                 
@@ -2197,9 +2208,9 @@ while True:
         # ─────────────────────────────────────────────
         # パラメータ設定
         # ─────────────────────────────────────────────
-        min_height = 2.35  # 最低高さ
+        # min_height = 2.35  # 最低高さ
         max_height = 2.7
-        center_z = 2.525 # 中間点（すれ違いポイント）
+        # center_z = 2.525 # 中間点（すれ違いポイント）
 
         # ─────────────────────────────────────────────
         # 1) 位相を進める（トランジション完了後のみ）
@@ -2279,7 +2290,8 @@ while True:
                 osc_client_max.send_message('/trig', int(selected_node_id))
                 # トランジション中はすぐに反映                
                 # ★天上天下モードのパラメータ、振幅と速度をランダムに設定
-                mode_menu.tenge_amplitude = random.uniform(0.05, 0.25)
+                # mode_menu.tenge_amplitude = random.uniform(0.05, 0.25)
+                mode_menu.tenge_amplitude = random.uniform(0.05, max_height - center_z)
                 mode_menu.tenge_speed = random.uniform(0.5, 0.8)
                 
                 # crossing が True なら新しい Group A が決まった直後
@@ -2732,12 +2744,13 @@ while True:
                                 ag.j*waveScale + sim_time*0.3)
                 
                 # 人との距離に基づいて振幅と中心高さを計算
-                min_amplitude = 0.1
-                max_amplitude = 0.2
-                avoid_radius = 1.5
-                
-                base_height_with_person = 2.6
-                base_height_without_person = 2.3
+                min_amplitude = 0.2
+                max_amplitude = 0.3
+                # avoid_radius = 1.5
+                avoid_radius = detect_radius
+
+                base_height_with_person = 2.5
+                # base_height_without_person = 2.0
                 
                 # 各観客からの影響を計算
                 amplitude_factor = 1.0
@@ -2958,8 +2971,8 @@ while True:
         drop_up_s_n   = 1.5
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
-        rare_prob     = 0.03 # was 0.002
-        rare_factor   = 4 # was 6 
+        # rare_prob     = 0.03 # was 0.002
+        # rare_factor   = 4 # was 6 
         drop_m_rare   = drop_m_norm * rare_factor
         drop_down_s_r = drop_down_s_n * rare_factor
         drop_up_s_r   = drop_up_s_n   * rare_factor
