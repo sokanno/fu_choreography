@@ -112,7 +112,7 @@ current_sine_freq = target_sine_freq
 # ========================================================
 # 回る天井モード用パラメータ
 # ========================================================
-tilt_angle_deg   = 4.0    # 平面の傾き（°）
+tilt_angle_deg   = 5.5    # 平面の傾き（°）
 plane_rot_speed  = 0.3     # 回転速度（rad/s）
 plane_angle      = 0.0     # フレームごとに増加
 plane_height     = 2.5     # 平面中心の高さ
@@ -1875,7 +1875,7 @@ while True:
             
 # (H) 色更新（空の演出バージョン）
             # ★空の色彩サイクル（1日の空の変化）- 速度を半分に
-            cycle_time = sim_time * color_speed * 0.5
+            cycle_time = sim_time * color_speed * 0.25
             
             # 1サイクルを1日として、0.0-1.0の時間として正規化
             day_time = cycle_time % 1.0
@@ -2895,8 +2895,8 @@ while True:
         drop_up_s_n   = 1.5
         drop_total_n  = drop_down_s_n + drop_up_s_n
 
-        rare_prob     = 0.01 # was 0.002
-        rare_factor   = 3
+        rare_prob     = 10.0 # was 0.002
+        rare_factor   = 15 # was 6 
         drop_m_rare   = drop_m_norm * rare_factor
         drop_down_s_r = drop_down_s_n * rare_factor
         drop_up_s_r   = drop_up_s_n   * rare_factor
