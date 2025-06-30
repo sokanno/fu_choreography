@@ -1886,7 +1886,7 @@ while True:
             
             # (H) 色更新（空の演出バージョン）
             # ★空の色彩サイクル（1日の空の変化）- 速度を半分に 一日の長さ 1日の長さ
-            cycle_time = sim_time * color_speed * 0.2
+            cycle_time = sim_time * color_speed * 0.25
             
             # 1サイクルを1日として、0.0-1.0の時間として正規化
             day_time = cycle_time % 1.0
