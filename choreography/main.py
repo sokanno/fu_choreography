@@ -2204,13 +2204,51 @@ while True:
         
         # トランジション中かどうか
         in_transition = transition_progress < 1.0
+
+        # ─────────────────────────────────────────────
+        # ★人検出による高さ調整 - パラメータ設定
+        # ─────────────────────────────────────────────
+        max_height = 2.7  # 物理的制約により固定
+        min_height = 1.9  # 人がいない場合の最低高さ
+        center_z = (max_height + min_height) / 2  # 中間点を動的に計算
+        # 人がいるかどうかを確認
+        people_detected = len(audiences) > 0
+        detection_radius = 1.5  # ロボットから1.5m以内の人を検出対象とする
+
+        # 各ロボットの1.5m以内に人がいるかどうかを確認
+        people_detected = False
+        people_in_range_count = 0
+        detection_details = []
         
-        # ─────────────────────────────────────────────
-        # パラメータ設定
-        # ─────────────────────────────────────────────
-        # min_height = 2.35  # 最低高さ
-        max_height = 2.7
-        # center_z = 2.525 # 中間点（すれ違いポイント）
+        for ag in agents:
+            for p in audiences:
+                # XY平面での距離を計算
+                distance = math.hypot(p.x - ag.x, p.y - ag.y)
+                if distance <= detection_radius:
+                    people_detected = True
+                    people_in_range_count += 1
+                    detection_details.append(f"Robot{ag.node_id}-Person距離:{distance:.2f}m")
+                    break  # 一つのロボットで検出されたら次のロボットへ
+
+        if people_detected:
+            min_height = 2.1  # 人がいる場合は安全な高さ
+        else:
+            min_height = 1.1  # 人がいない場合は低い高さまで使用可能
+        
+        center_z = (max_height + min_height) / 2  # 中間点を動的に計算
+        
+        print(f"[天上天下モード] 近傍人検出: {people_detected} "
+              f"(全体{len(audiences)}人, 1.5m以内{people_in_range_count}組), "
+              f"高さ範囲: {min_height:.1f}m - {max_height:.1f}m, 中間点: {center_z:.2f}m")
+        if detection_details:
+            print(f"  検出詳細: {', '.join(detection_details[:3])}")  # 最大3つまで表示
+        
+        # # ─────────────────────────────────────────────
+        # # パラメータ設定
+        # # ─────────────────────────────────────────────
+        # # min_height = 2.35  # 最低高さ
+        # max_height = 2.7
+        # # center_z = 2.525 # 中間点（すれ違いポイント）
 
         # ─────────────────────────────────────────────
         # 1) 位相を進める（トランジション完了後のみ）
@@ -2419,7 +2457,9 @@ while True:
                         # バリエーション用の個別振幅をリセット
                         if hasattr(ag, 'tenge_amplitude'):
                             delattr(ag, 'tenge_amplitude')
-            
+            # 高さの範囲チェック（安全のため）
+            ag.z = max(min_height, min(max_height, ag.z))
+
             # グループ変更の処理
             if new_group != getattr(ag, "group", None):
                 ag.prev_color = getattr(ag, "current_color", vector(1, 1, 1))
