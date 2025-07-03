@@ -1149,6 +1149,10 @@ def send_robot_data(agent):
     dl = int(agent.downlight_brightness * 255)
     mqtt_client.publish(f"dl/{agent.node_id}", bytes([dl]))
 
+    # 自律モードフラグ（新規追加）
+    at = 1 if agent.autonomous_mode else 0
+    mqtt_client.publish(f"at/{agent.node_id}", bytes([at]))
+
 
 # def send_robot_data(agent):
 #     """
