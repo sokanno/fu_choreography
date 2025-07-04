@@ -20,7 +20,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "booth"  # "venue" or else
+place = "venue"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -73,8 +73,8 @@ led_amp         = 1.0   # LED 波の振幅スケーラ
 # ========================================================
 # 各シーンごとのdetect_radius
 # ========================================================
-detect_radius_mawaru = 2.5  # 回る天井モード用
-detect_radius_tenge = 2.5  # 天上天下唯我独尊モード用
+detect_radius_mawaru = 0.0  # 回る天井モード用
+detect_radius_tenge = 0.0  # 天上天下唯我独尊モード用
 detect_radius_fish = 4.0  # 魚群モード用
 detect_radius_shimmer = 2.5  # シマー用（未使用）
 
