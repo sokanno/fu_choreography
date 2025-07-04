@@ -387,7 +387,7 @@ class Agent:
         self.target_downlight = 0.0      # イージング用の目標値
 
         # 自律制御モード用
-        self.autonomous_mode = False  # 自律制御中かどうか
+        self.autonomous_mode = True  # 自律制御中かどうか
         self.actual_pitch = self.pitch  # 実際の表示用pitch
 
         # 筒の端の表示用リング（赤い輪）
@@ -2536,7 +2536,8 @@ while True:
                     tgt_pitch = max(-60, min(60, tgt_pitch))
                     
                     # Group Aは常に自律モード（トランジション完了後）
-                    ag.autonomous_mode = True if not in_transition else False
+                    # ag.autonomous_mode = True if not in_transition else False
+                    ag.autonomous_mode = False if not in_transition else False
                 else:
                     ag.autonomous_mode = False
                     tgt_yaw, tgt_pitch = ag.yaw, ag.pitch
@@ -3937,6 +3938,7 @@ while True:
         
         # 表示更新
         for ag in agents:
+            ag.autonomous_mode = True
             ag.display()
             update_downlight_display(ag)  # ← ダウンライト表示を更新
             send_queue.put(ag)
