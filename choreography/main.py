@@ -76,7 +76,7 @@ led_amp         = 1.0   # LED 波の振幅スケーラ
 detect_radius_mawaru = 0.0  # 回る天井モード用
 detect_radius_tenge = 0.0  # 天上天下唯我独尊モード用
 detect_radius_fish = 4.0  # 魚群モード用
-detect_radius_shimmer = 2.5  # シマー用（未使用）
+detect_radius_shimmer = 0.0  # シマー用（未使用）
 
 
 # ========================================================
