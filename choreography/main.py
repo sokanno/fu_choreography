@@ -20,7 +20,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "venue"  # "venue" or else
+place = "booth"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -69,6 +69,15 @@ led_color = vector(1,1,1)
 bg3d_brightness = 0.1   # 3D背景の明るさ (0=真っ黒, 1=真っ白)
 bg2d_brightness = 0.1   # 2D背景の明るさ
 led_amp         = 1.0   # LED 波の振幅スケーラ
+
+# ========================================================
+# 各シーンごとのdetect_radius
+# ========================================================
+detect_radius_mawaru = 2.5  # 回る天井モード用
+detect_radius_tenge = 2.5  # 天上天下唯我独尊モード用
+detect_radius_fish = 4.0  # 魚群モード用
+detect_radius_shimmer = 2.5  # シマー用（未使用）
+
 
 # ========================================================
 # HSB カラー制御パラメータ（0.0～1.0）
@@ -126,7 +135,7 @@ audience_noise_speed = 0.2    # 時間変化の速さ
 audience_speed_amp = 0.5   # 0.0＝固定速度、1.0＝±50%の変動幅
 
 # 人が近くにいたら優先で向く検出半径[m]
-detect_radius = 1.0
+detect_radius = 2.5
 
 # ─── ② 鬼さんこちらモード用グローバルパラメータ ────────────────────────
 oni_empty_radius     = 2.5    # 空き半径（スライダーで可変）
@@ -1049,10 +1058,8 @@ def check_autonomous_mode(agent, audiences, autonomous_threshold=1.5):
         dx = closest.x - agent.x
         dy = closest.y - agent.y
         target_yaw = math.degrees(math.atan2(dy, dx))
-        
         # 現在の向きと目標方向の差
         yaw_diff = abs(((target_yaw - agent.yaw + 540) % 360) - 180)
-        
         # 正面を向いている（±30度以内）場合に自律モードON
         if yaw_diff < 30:
             # 観客の高さを考慮したpitch計算
@@ -1060,10 +1067,35 @@ def check_autonomous_mode(agent, audiences, autonomous_threshold=1.5):
             horiz_dist = math.hypot(dx, dy)
             target_pitch = math.degrees(math.atan2(dz, horiz_dist))
             target_pitch = max(-60, min(60, target_pitch))
-            
             return True, target_pitch
-    
     return False, None
+    魚群モード専用の自律モード判定
+
+    # if closest:
+    #     # 観客への方向を計算
+    #     dx = closest.x - agent.x
+    #     dy = closest.y - agent.y
+    #     target_yaw = math.degrees(math.atan2(dy, dx))
+        
+    #     # 現在の向きと目標方向の差
+    #     yaw_diff = abs(((target_yaw - agent.yaw + 540) % 360) - 180)
+        
+    #     # 魚群モード：1.5m～4.0mの範囲で、かつ正面を向いている場合のみ自律モード
+    #     if 1.5 <= min_dist <= 4.0 and yaw_diff < 30:
+    #         # 観客の高さを考慮したpitch計算
+    #         dz = closest.height - agent.z
+    #         horiz_dist = math.hypot(dx, dy)
+    #         target_pitch = math.degrees(math.atan2(dz, horiz_dist))
+    #         target_pitch = max(-60, min(60, target_pitch))
+            
+    #         agent.autonomous_mode = True
+    #         agent.target_pitch = target_pitch
+    #     else:
+    #         agent.autonomous_mode = False
+    #         agent.target_pitch = None
+    # else:
+    #     agent.autonomous_mode = False
+    #     agent.target_pitch = None
 
 
 def apply_sound_reaction():
@@ -1620,7 +1652,8 @@ while True:
         # ========================================================
         # 回る天井モードの初期化とトランジション
         # ========================================================
-        
+        detect_radius = detect_radius_mawaru  # デフォルト値
+
         # モード切り替え検出
         if not hasattr(mode_menu, 'ceiling_mode_initialized') or not mode_menu.ceiling_mode_initialized:
             print(f"[回る天井モード] 初期化開始")
@@ -2136,6 +2169,7 @@ while True:
     # ─── 天上天下モード ────────────────────────────────
     elif mode_menu.selected == "天上天下モード":
         # ── Group A の初期色を 1 回だけ用意 ──
+        detect_radius = detect_radius_tenge
         if not hasattr(mode_menu, "groupa_color"):
             h_rand = random.random()
             mode_menu.groupa_color = vector(*colorsys.hsv_to_rgb(h_rand, 1.0, 1.0))
@@ -2634,7 +2668,7 @@ while True:
             # ========================================================
             # 魚群モードの初期化とトランジション
             # ========================================================
-            
+            detect_radius = detect_radius_fish
             # グローバルなprev_modeの確認（デバッグ用）
             current_prev_mode = getattr(mode_menu, 'global_prev_mode', None)
             
@@ -2784,45 +2818,89 @@ while True:
                 # ========================================================
                 # Z座標の波動（人を避ける動作）
                 # ========================================================
+
                 z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
                                 ag.j*waveScale + sim_time*0.3)
-                
+
                 # 人との距離に基づいて振幅と中心高さを計算
                 min_amplitude = 0.2
                 max_amplitude = 0.3
-                # avoid_radius = 1.5
-                avoid_radius = detect_radius
+                avoid_radius = 2.5  # 逃げ始める半径
 
                 base_height_with_person = 2.5
                 # base_height_without_person = 2.0
-                
+
                 # 各観客からの影響を計算
                 amplitude_factor = 1.0
                 height_factor = 1.0
-                
+
+                # ★自律モード判定用の変数
+                closest_person = None
+                closest_dist = float('inf')
+
                 for person in audiences:
                     dist = math.hypot(person.x - ag.x, person.y - ag.y)
                     
+                    # 最も近い人を記録
+                    if dist < closest_dist:
+                        closest_dist = dist
+                        closest_person = person
+                    
+                    # 既存の逃げ動作の計算（2.5m以内）
                     if dist < avoid_radius:
                         t = dist / avoid_radius
-                        smooth_t = t * t * (3 - 2 * t)
+                        smooth_t = t * t * (3.0 - 2.0 * t)
                         person_factor = smooth_t
                         amplitude_factor = min(amplitude_factor, person_factor)
                         height_factor = min(height_factor, person_factor)
-                
-                # 最終的な振幅を計算
+
+                # ★魚群モード専用の自律モード判定（既存の逃げ動作とは独立）
+                if closest_person:
+                    if 1.5 < closest_dist <= 4.0:  # 1.5mより遠く、4.0m以内
+                        # 観客の方向を計算
+                        dx = closest_person.x - ag.x
+                        dy = closest_person.y - ag.y
+                        dz = closest_person.height - ag.z
+                        target_yaw = math.degrees(math.atan2(dy, dx))
+                        
+                        # 現在の向きと目標方向の差
+                        yaw_diff = abs(((target_yaw - ag.yaw + 540) % 360) - 180)
+                        
+                        # 正面を向いている場合（±30度以内）のみ自律モードON
+                        if yaw_diff < 30:
+                            ag.autonomous_mode = True
+                            # Pitchも計算
+                            horiz_dist = math.hypot(dx, dy)
+                            target_pitch = math.degrees(math.atan2(dz, horiz_dist))
+                            ag.target_pitch = max(-60, min(60, target_pitch))
+                        else:
+                            ag.autonomous_mode = False
+                            ag.target_pitch = None
+                    else:
+                        # 1.5m以内または4.0m以上は自律モードOFF
+                        ag.autonomous_mode = False
+                        ag.target_pitch = None
+                else:
+                    # 観客がいない場合
+                    ag.autonomous_mode = False
+                    ag.target_pitch = None
+
+                # ★自律モードのビジュアル更新（他のモードと同じ）
+                ag.update_autonomous_indicator()
+
+                # 最終的な振幅を計算（既存のロジックそのまま）
                 wave_amplitude = min_amplitude + (max_amplitude - min_amplitude) * amplitude_factor
-                
-                # 基準高さを計算
-                current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1 - height_factor)
-                
+
+                # 基準高さを計算（既存のロジックそのまま）
+                current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1.0 - height_factor)
+
                 # 目標のZ座標（波動を含む最終位置）
                 target_z_with_wave = current_base_height + z_wave * wave_amplitude
-                
+
                 # 波動効果の段階的適用（トランジション後も3秒かけて）
                 wave_ramp_duration = 3.0
                 time_since_transition = sim_time - getattr(mode_menu, 'fish_transition_start', sim_time) - getattr(mode_menu, 'fish_transition_duration', 2.0)
-                
+
                 if in_transition:
                     # トランジション中：開始位置から基準高さへ
                     ag.z = ag.fish_start_z + (ag.fish_target_z - ag.fish_start_z) * eased_progress
@@ -2831,9 +2909,9 @@ while True:
                     wave_progress = time_since_transition / wave_ramp_duration
                     # easeInOutでスムーズに
                     if wave_progress < 0.5:
-                        wave_eased = 2 * wave_progress * wave_progress
+                        wave_eased = 2.0 * wave_progress * wave_progress
                     else:
-                        wave_eased = 1 - pow(-2 * wave_progress + 2, 2) / 2
+                        wave_eased = 1.0 - pow(-2.0 * wave_progress + 2.0, 2) / 2.0
                     
                     # 初期波動値から現在の波動値へ補間（ジャンプ防止）
                     initial_wave = getattr(ag, 'fish_initial_wave', 0.0)
@@ -2844,53 +2922,79 @@ while True:
                 else:
                     # 通常時：完全な波動効果
                     ag.z = target_z_with_wave
-                
+
                 # 高さの制限
                 ag.z = max(minZ, min(maxZ, ag.z))
 
                 # ジオメトリ更新
                 update_geometry(ag)
-
-                # ========================================================
-                # LED色のきらめき（徐々に周波数を上げる）
-                # ========================================================
+                # z_wave = pnoise2(ag.i*waveScale + sim_time*0.3,
+                #                 ag.j*waveScale + sim_time*0.3)
                 
-                # きらめきの周波数を徐々に上げる
-                # if in_transition:
-                #     # 0.1Hz（ゆっくり）から10Hz（速い）へ
-                #     target_frequency = 10.0
-                #     ag.fish_flicker_frequency = 0.1 + (target_frequency - 0.1) * eased_progress
+                # # 人との距離に基づいて振幅と中心高さを計算
+                # min_amplitude = 0.2
+                # max_amplitude = 0.3
+                # # avoid_radius = 1.5
+                # avoid_radius = detect_radius
+
+                # base_height_with_person = 2.0
+                # # base_height_without_person = 2.0
+                
+                # # 各観客からの影響を計算
+                # amplitude_factor = 1.0
+                # height_factor = 1.0
+                
+                # for person in audiences:
+                #     dist = math.hypot(person.x - ag.x, person.y - ag.y)
                     
-                #     # 色相の変化幅も徐々に増やす
-                #     hue_variation = 0.02 + 0.13 * eased_progress  # 0.02→0.15
-                #     brightness_variation = 0.05 + 0.25 * eased_progress  # 0.05→0.3
-                # else:
-                #     ag.fish_flicker_frequency = 10.0
-                #     hue_variation = 0.15
-                #     brightness_variation = 0.3
+                #     if dist < avoid_radius:
+                #         t = dist / avoid_radius
+                #         smooth_t = t * t * (3 - 2 * t)
+                #         person_factor = smooth_t
+                #         amplitude_factor = min(amplitude_factor, person_factor)
+                #         height_factor = min(height_factor, person_factor)
                 
-                # きらめきの計算（各エージェントの位相を使用）
-                # hue = (0.55 + steer.x  * hue_variation) % 1.0
-                # # hue = (0.55 + steer.x  * hue_variation) % 1.0
-
-                # flick = 0.7 + brightness_variation * math.sin(ag.fish_flicker_frequency * sim_time + ag.fish_flicker_phase)
+                # # 最終的な振幅を計算
+                # wave_amplitude = min_amplitude + (max_amplitude - min_amplitude) * amplitude_factor
                 
-                # # 明度を制限（暗くなりすぎない）
-                # flick = max(0.5, min(1.0, flick))
+                # # 基準高さを計算
+                # current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1 - height_factor)
                 
-                # r, g, b = colorsys.hsv_to_rgb(hue, 0.8, flick)
-                # flicker_color = vector(r, g, b)
+                # # 目標のZ座標（波動を含む最終位置）
+                # target_z_with_wave = current_base_height + z_wave * wave_amplitude
                 
-                # # トランジション中は基本色ときらめき色をブレンド
+                # # 波動効果の段階的適用（トランジション後も3秒かけて）
+                # wave_ramp_duration = 3.0
+                # time_since_transition = sim_time - getattr(mode_menu, 'fish_transition_start', sim_time) - getattr(mode_menu, 'fish_transition_duration', 2.0)
+                
                 # if in_transition:
-                #     # きらめきの影響を徐々に強くする
-                #     blend_factor = eased_progress * 0.7  # 最大70%までブレンド
-                #     final_color = base_color * (1 - blend_factor) + flicker_color * blend_factor
+                #     # トランジション中：開始位置から基準高さへ
+                #     ag.z = ag.fish_start_z + (ag.fish_target_z - ag.fish_start_z) * eased_progress
+                # elif time_since_transition < wave_ramp_duration:
+                #     # トランジション直後：基準高さから波動込みの高さへ徐々に移行
+                #     wave_progress = time_since_transition / wave_ramp_duration
+                #     # easeInOutでスムーズに
+                #     if wave_progress < 0.5:
+                #         wave_eased = 2 * wave_progress * wave_progress
+                #     else:
+                #         wave_eased = 1 - pow(-2 * wave_progress + 2, 2) / 2
+                    
+                #     # 初期波動値から現在の波動値へ補間（ジャンプ防止）
+                #     initial_wave = getattr(ag, 'fish_initial_wave', 0.0)
+                #     interpolated_wave = initial_wave + (z_wave - initial_wave) * wave_eased
+                    
+                #     # 波動効果も徐々に適用
+                #     ag.z = ag.fish_target_z + interpolated_wave * wave_amplitude * wave_eased
                 # else:
-                #     final_color = flicker_color
+                #     # 通常時：完全な波動効果
+                #     ag.z = target_z_with_wave
                 
-                # ag.current_color = final_color
-                # X座標の正規化
+                # # 高さの制限
+                # ag.z = max(minZ, min(maxZ, ag.z))
+
+                # # ジオメトリ更新
+                # update_geometry(ag)
+
                 # ========================================================
                 # LED色のきらめき（徐々に周波数を上げる）
                 # ========================================================
@@ -2998,6 +3102,7 @@ while True:
     # ------------------------------------------------------------
     elif mode_menu.selected == "蜂シマーモード":
     # ------------------------------------------------------------
+        detect_radius = detect_radius_shimmer
         # --- 1) 各種パラメータ（先に定義） ---
         shim_base_freq_hz = 1.0
         shim_base_amp_m   = 0.005
