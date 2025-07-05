@@ -315,7 +315,8 @@ modes = ["マニュアルモード",
          "魚群モード",
          "蜂シマーモード",
          "天上天下モード",
-         "回る天井"]
+         "回る天井",
+         "向き合うモード"]
         #  "舞台挨拶モード"]
 mode_menu = menu(
     choices=modes,
@@ -3927,6 +3928,23 @@ while True:
             
             # 描画 & MQTT 送信
             ag.display()
+            send_queue.put(ag)
+
+    # メインループの既存のelif文の後に追加：
+    elif mode_menu.selected == "向き合うモード":
+        # マニュアルモードの処理
+        # process_manual_commands()
+        # apply_manual_mode()
+        
+        # 表示更新
+        for ag in agents:
+            ag.autonomous_mode = True
+            ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
+            ag.current_color.x = random.uniform(0.8, 0.83)
+            ag.current_color.y = random.uniform(0.53, 0.56)
+            ag.current_color.z = random.uniform(0.1, 0.13)  # 黄色系の色に設定
+            ag.display()
+            update_downlight_display(ag)  # ← ダウンライト表示を更新
             send_queue.put(ag)
 
 
