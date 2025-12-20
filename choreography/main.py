@@ -20,7 +20,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "test"  # "venue" or else
+place = "venue"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -95,7 +95,7 @@ base_sat   = 1.0   # ← 追加：彩度のデフォルト
 # 定数
 # ========================================================
 ROWS, COLS     = 7, 7
-minZ, maxZ     = 0.0, 2.8
+minZ, maxZ     = 0.0, 2.8 # 0.0, 2.8
 sepDist        = 0.4
 agent_length   = 0.30
 agent_radius   = 0.075/2
@@ -2247,8 +2247,10 @@ while True:
         # ─────────────────────────────────────────────
         # ★人検出による高さ調整 - パラメータ設定
         # ─────────────────────────────────────────────
-        max_height = 2.2  # 物理的制約により固定
-        min_height = 1.0  # 人がいない場合の最低高さ
+        # max_height = 2.2  # 物理的制約により固定
+        # min_height = 1.0  # 人がいない場合の最低高さ
+        max_height = 2.75  # 物理的制約により固定
+        min_height = 1.85  # 人がいない場合の最低高さ
         center_z = (max_height + min_height) / 2  # 中間点を動的に計算
         # 人がいるかどうかを確認
         people_detected = len(audiences) > 0
@@ -2698,7 +2700,9 @@ while True:
                     
                     # 目標値を設定
                     # ag.fish_target_z = 2.7  # 基準高さ
-                    ag.fish_target_z = 1.0  # 基準高さ
+                    # ag.fish_target_z = 1.0  # 基準高さ
+                    ag.fish_target_z = 2.0  # 基準高さ
+
                     ag.fish_target_pitch = 0.0  # 水平
                     ag.fish_target_color = vector(0.0, 0.7, 0.8)  # 青緑系の初期色
                     
@@ -2828,13 +2832,13 @@ while True:
                 # 人との距離に基づいて振幅と中心高さを計算
                 min_amplitude = 0.3
                 max_amplitude = 0.4
-                # avoid_radius = 2.5  # 逃げ始める半径
-                avoid_radius = 0.0  # 逃げ始める半径
+                avoid_radius = 2.5  # 逃げ始める半径
+                # avoid_radius = 0.0  # 逃げ始める半径
 
 
-                base_height_with_person = 1.0
-                # base_height_with_person = 2.5
-                # base_height_without_person = 2.0
+                # base_height_with_person = 1.0
+                base_height_with_person = 2.5
+                base_height_without_person = 2.0
 
                 # 各観客からの影響を計算
                 amplitude_factor = 1.0
@@ -3120,7 +3124,8 @@ while True:
         yaw_rise_s    = 0.5
         yaw_decay_tau = 0.8
 
-        drop_m_norm   = -0.15
+        # drop_m_norm   = -0.15
+        drop_m_norm   = 0.15
         # drop_down_s_n = 0.2
         drop_down_s_n = 0.61   # 0.15m ÷ 0.61秒 ≈ 0.245m/s
         drop_up_s_n   = 1.5
@@ -3164,7 +3169,8 @@ while True:
                 ag.shimmer_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
                 
                 # デフォルトの正位置を設定
-                ag.shimmer_default_z = 1.0  # シマーモードの基準高さ
+                # ag.shimmer_default_z = 1.0  # シマーモードの基準高さ
+                ag.shimmer_default_z = 2.5  # シマーモードの基準高さ
                 ag.shimmer_default_pitch = 0.0
                 ag.shimmer_default_color = vector(0.1, 0.1, 0.1)  # 黄色系
                 
@@ -3943,7 +3949,8 @@ while True:
         # 表示更新
         for ag in agents:
             ag.autonomous_mode = True
-            ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
+            # ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
+            ag.z = random.uniform(1.8, 1.95)  # 高さをランダムに設定
             ag.current_color.x = random.uniform(0.8, 0.83)
             ag.current_color.y = random.uniform(0.53, 0.56)
             ag.current_color.z = random.uniform(0.1, 0.13)  # 黄色系の色に設定
