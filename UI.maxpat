@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 154.0, 106.0, 433.0, 728.0 ],
+		"rect" : [ 1188.0, 236.0, 408.0, 728.0 ],
 		"bglocked" : 0,
 		"openinpresentation" : 1,
 		"default_fontsize" : 12.0,
@@ -286,8 +286,8 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 445.600006639957428, 148.000002205371857, 80.0, 21.0 ],
-					"text" : "loadmess 2.25"
+					"patching_rect" : [ 445.600006639957428, 148.000002205371857, 74.0, 21.0 ],
+					"text" : "loadmess 2.4"
 				}
 
 			}
@@ -1931,7 +1931,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 736.000010967254639, 182.400002717971802, 50.0, 22.0 ],
-					"text" : "5"
+					"text" : "6"
 				}
 
 			}
@@ -2227,7 +2227,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 441.600006580352783, 120.800001800060272, 74.0, 21.0 ],
-					"text" : "loadmess 9.5"
+					"text" : "loadmess 12."
 				}
 
 			}
@@ -2398,15 +2398,15 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 213.0, 15.0, 668.0, 22.0 ],
-					"text" : "clear, append マニュアルモード, append 魚群, append シマー, append 天上天下モード, append 回る天井, append 向き合う"
+					"patching_rect" : [ 213.0, 15.0, 753.0, 22.0 ],
+					"text" : "clear, append マニュアルモード, append 魚群, append シマー, append 天上天下モード, append 回る天井, append 向き合う, append ホタル"
 				}
 
 			}
 , 			{
 				"box" : 				{
 					"id" : "obj-17",
-					"items" : [ "マニュアルモード", ",", "魚群", ",", "シマー", ",", "天上天下モード", ",", "回る天井", ",", "向き合う" ],
+					"items" : [ "マニュアルモード", ",", "魚群", ",", "シマー", ",", "天上天下モード", ",", "回る天井", ",", "向き合う", ",", "ホタル" ],
 					"maxclass" : "umenu",
 					"numinlets" : 1,
 					"numoutlets" : 3,
