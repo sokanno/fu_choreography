@@ -211,6 +211,62 @@ PRESENCE_TIMEOUT = 1.0        # ★ 1 秒
 last_aud_msg_time = -999.0
 
 # ========================================================
+# 見えない蝶々モード用パラメータ
+# ========================================================
+# 蝶の移動パラメータ
+# 蝶の移動パラメータ
+butterfly_speed = 0.6                # ★トップスピードを半分に（0.8→0.4）
+butterfly_speed_min = 0.05           # ★最低速度（ほぼ止まる）
+butterfly_speed_variation = 0.8      # ★速度変動の幅
+butterfly_z_base = 1.0               # ★蝶の基準高さを1.0mに
+butterfly_z_amplitude = 0.25         # ★振幅を小さく（0.5m〜1.5mの範囲に収める）
+butterfly_flutter_freq = 2.0
+butterfly_flutter_amp = 0.15         # ★ひらひらも控えめに
+butterfly_path_noise_scale = 0.3
+butterfly_path_noise_speed = 0.2
+
+# 蝶の状態管理
+butterfly_state = "flying"
+
+# ★飛行時の筒の基準高さ（2m前後）
+butterfly_base_z_flying = 2.0
+
+# 花に止まる時のパラメータ
+butterfly_rest_interval_min = 20.0
+butterfly_rest_interval_max = 30.0
+butterfly_rest_duration_min = 5.0
+butterfly_rest_duration_max = 10.0
+butterfly_rest_z = 0.6               # ★花の高さ（蝶の飛行範囲より低く）
+
+# 筒の振る舞いパラメータ
+# 飛行中（repel: 距離を取る）
+butterfly_z_influence_radius = 4.5
+butterfly_z_influence_strength_flying = 0.5   # ★少し控えめに（基準が高いので）
+
+# 休憩中（attract: 近づく - 逆円錐型）
+butterfly_z_influence_strength_resting = 1.2
+butterfly_funnel_radius = 5.0                 # 影響を受ける最大半径
+butterfly_funnel_inner_radius = 1.0           # ★内側の半径（ここまでは最低点）
+butterfly_funnel_min_z = 1.7                  # ★最低点（半径1m以内）
+butterfly_funnel_max_z = 2.4                  # ★最高点（遠いところ）
+
+# 色パラメータ
+butterfly_color_near = vector(1.0, 0.4, 0.6)
+butterfly_color_far = vector(1.0, 0.5, 0.2)
+butterfly_color_distance_near = 1.0
+butterfly_color_distance_far = 5.0
+butterfly_brightness_near = 1.0
+butterfly_brightness_far = 0.15
+
+# 休憩中の特別な色
+butterfly_color_resting_near = vector(1.0, 0.3, 0.5)
+butterfly_color_resting_far = vector(0.9, 0.6, 0.3)
+
+# ★蝶の可視化（デバッグ用）
+butterfly_visible = True  # True: 赤点を表示, False: 非表示
+
+detect_radius_butterfly = 0.0
+# ========================================================
 # ホタルモード用パラメータ（グローバル）
 # ========================================================
 # 基本発光パラメータ
@@ -361,7 +417,8 @@ modes = ["マニュアルモード",
          "天上天下モード",
          "回る天井",
          "向き合うモード",
-         "ホタルモード",]
+         "ホタルモード",
+         "見えない蝶々モード"]
         #  "舞台挨拶モード"]
 mode_menu = menu(
     choices=modes,
@@ -741,7 +798,304 @@ class Agent:
             ag.prev_yaw   = ag.yaw
             ag.prev_pitch = ag.pitch
             ag.prev_color = ag.current_color
+# ========================================================
+# 見えない蝶々クラス（花に止まる機能付き）
+# ========================================================
+class InvisibleButterfly:
+    def __init__(self, center_x, center_y, area_radius):
+        """
+        center_x, center_y: エリアの中心座標
+        area_radius: 蝶が飛び回るエリアの半径
+        """
+        self.center_x = center_x
+        self.center_y = center_y
+        self.area_radius = area_radius
+        
+        # 初期位置
+        self.x = center_x
+        self.y = center_y
+        self.z = butterfly_z_base
+        
+        # 移動方向（ラジアン）
+        self.heading = random.uniform(0, 2 * math.pi)
+        
+        # ノイズ用の時間オフセット
+        self.noise_time = random.random() * 1000
+        
+        # 状態管理
+        self.state = "flying"
+        self.state_start_time = 0.0
+        self.next_rest_time = 0.0
+        self.rest_duration = 0.0
+        
+        # 休憩位置（花の位置）
+        self.rest_x = center_x
+        self.rest_y = center_y
+        self.rest_z = butterfly_rest_z
+        
+        # 着陸・離陸用の開始位置
+        self.transition_start_x = 0.0
+        self.transition_start_y = 0.0
+        self.transition_start_z = 0.0
 
+        # 前回の位置
+        self.prev_x = self.x
+        self.prev_y = self.y
+        self.prev_z = self.z
+        
+        # 3D表示用
+        self.visual = sphere(
+            canvas=scene3d,
+            pos=vector(self.x, self.y, self.z),
+            radius=0.15,
+            color=color.magenta,
+            opacity=0.3,
+            emissive=True
+        )
+        
+        # 2D表示用
+        self.visual_2d = sphere(
+            canvas=scene2d,
+            pos=vector(self.x, self.y, 0.2),
+            radius=0.1,
+            color=color.magenta,
+            opacity=0.5,
+            emissive=True
+        )
+        
+        # 花の位置を示すマーカー
+        self.flower_marker = cylinder(
+            canvas=scene3d,
+            pos=vector(self.x, self.y, 0),
+            axis=vector(0, 0, 0.1),
+            radius=0.2,
+            color=vector(0.8, 0.3, 0.5),
+            opacity=0.0,
+            emissive=True
+        )
+    
+    def initialize_timing(self, current_time):
+        """タイミングの初期化"""
+        self.state_start_time = current_time
+        self.next_rest_time = current_time + random.uniform(
+            butterfly_rest_interval_min, 
+            butterfly_rest_interval_max
+        )
+        print(f"[蝶] 次の休憩予定: {self.next_rest_time - current_time:.1f}秒後")
+    
+    def choose_flower_position(self):
+        """花の位置をランダムに選ぶ（エリア内）"""
+        angle = random.uniform(0, 2 * math.pi)
+        radius = random.uniform(0.3, self.area_radius * 0.7)
+        self.rest_x = self.center_x + math.cos(angle) * radius
+        self.rest_y = self.center_y + math.sin(angle) * radius
+        self.rest_z = butterfly_rest_z + random.uniform(-0.2, 0.2)
+        print(f"[蝶] 花の位置を選択: ({self.rest_x:.1f}, {self.rest_y:.1f}, {self.rest_z:.1f})")
+    
+    def update(self, t, dt):
+        """蝶の位置と状態を更新"""
+        
+        # ========================================================
+        # 1) 状態遷移の判定（最初にチェック）
+        # ========================================================
+        if self.state == "flying":
+            # ★休憩時間になったら着陸開始
+            if t >= self.next_rest_time:
+                self.state = "landing"
+                self.state_start_time = t
+                self.transition_start_x = self.x
+                self.transition_start_y = self.y
+                self.transition_start_z = self.z
+                self.choose_flower_position()
+                self.rest_duration = random.uniform(
+                    butterfly_rest_duration_min,
+                    butterfly_rest_duration_max
+                )
+                print(f"[蝶] 着陸開始 → 休憩時間: {self.rest_duration:.1f}秒")
+        
+        # ========================================================
+        # 2) 各状態の処理
+        # ========================================================
+        if self.state == "flying":
+            # より有機的な飛行パターン
+            
+            # 複数のノイズレイヤーで方向を決定
+            heading_slow = pnoise2(
+                self.noise_time * 0.05,
+                self.x * 0.1
+            ) * math.pi * 0.5
+            
+            heading_mid = pnoise2(
+                self.noise_time * 0.2 + 100,
+                self.y * 0.1 + 100
+            ) * math.pi * 0.3
+            
+            heading_fast = pnoise2(
+                self.noise_time * 0.8 + 200,
+                (self.x + self.y) * 0.2
+            ) * math.pi * 0.15
+            
+            heading_change = heading_slow + heading_mid + heading_fast
+            
+            # たまに急な方向転換
+            if random.random() < 0.005:
+                sudden_turn = random.uniform(-math.pi * 0.7, math.pi * 0.7)
+                self.heading += sudden_turn
+                print(f"[蝶] 急旋回! {math.degrees(sudden_turn):.0f}度")
+            else:
+                self.heading += heading_change * dt
+            
+            # 速度の緩急
+            speed_wave_slow = (pnoise1(self.noise_time * 0.08) + 1) / 2
+            speed_wave_mid = (pnoise1(self.noise_time * 0.25 + 50) + 1) / 2
+            speed_factor = speed_wave_slow * 0.7 + speed_wave_mid * 0.3
+            current_speed = butterfly_speed_min + (butterfly_speed - butterfly_speed_min) * speed_factor
+            
+            # ホバリング
+            hover_value = pnoise1(self.noise_time * 0.15 + 100)
+            if hover_value > 0.75:
+                hover_strength = (hover_value - 0.75) / 0.25
+                current_speed *= (1.0 - hover_strength * 0.9)
+            
+            # 移動
+            self.x += math.cos(self.heading) * current_speed * dt
+            self.y += math.sin(self.heading) * current_speed * dt
+            
+            # エリア境界での自然な方向転換
+            dist_from_center = math.hypot(self.x - self.center_x, self.y - self.center_y)
+            
+            if dist_from_center > self.area_radius * 0.7:
+                boundary_factor = (dist_from_center - self.area_radius * 0.7) / (self.area_radius * 0.3)
+                boundary_factor = min(1.0, boundary_factor)
+                
+                to_center = math.atan2(self.center_y - self.y, self.center_x - self.x)
+                offset_angle = random.uniform(-0.5, 0.5)
+                target_heading = to_center + offset_angle
+                
+                angle_diff = ((target_heading - self.heading + math.pi) % (2 * math.pi)) - math.pi
+                self.heading += angle_diff * 0.15 * boundary_factor
+            
+            # 高さの変動
+            z_wave1 = math.sin(self.noise_time * 0.3) * butterfly_z_amplitude * 0.4
+            z_wave2 = math.sin(self.noise_time * 0.7 + 2.5) * butterfly_z_amplitude * 0.3
+            z_flutter = math.sin(self.noise_time * butterfly_flutter_freq * 2 * math.pi) * butterfly_flutter_amp
+            z_noise = pnoise2(self.noise_time * 0.2, self.x * 0.1 + self.y * 0.1) * 0.15
+            
+            speed_ratio = current_speed / butterfly_speed
+            z_flutter_adjusted = z_flutter * (0.3 + 0.7 * speed_ratio)
+            
+            target_z = butterfly_z_base + z_wave1 + z_wave2 + z_flutter_adjusted + z_noise
+            
+            self.z += (target_z - self.z) * 0.1
+            self.z = max(0.5, min(1.5, self.z))
+        
+        elif self.state == "landing":
+            # 着陸中（2秒かけて花に降りる）
+            landing_duration = 2.0
+            elapsed = t - self.state_start_time
+            
+            if elapsed >= landing_duration:
+                self.state = "resting"
+                self.state_start_time = t
+                self.x = self.rest_x
+                self.y = self.rest_y
+                self.z = self.rest_z
+                self.flower_marker.opacity = 0.4
+                print(f"[蝶] 花に止まった（蜜を吸い中）")
+            else:
+                # イージングで花に向かって降下
+                progress = elapsed / landing_duration
+                if progress < 0.5:
+                    eased = 4 * progress * progress * progress
+                else:
+                    eased = 1 - pow(-2 * progress + 2, 3) / 2
+                
+                self.x = self.transition_start_x + (self.rest_x - self.transition_start_x) * eased
+                self.y = self.transition_start_y + (self.rest_y - self.transition_start_y) * eased
+                self.z = self.transition_start_z + (self.rest_z - self.transition_start_z) * eased
+        
+        elif self.state == "resting":
+            # 休憩中（花で蜜を吸っている）
+            elapsed = t - self.state_start_time
+            
+            if elapsed >= self.rest_duration:
+                self.state = "taking_off"
+                self.state_start_time = t
+                self.transition_start_x = self.x
+                self.transition_start_y = self.y
+                self.transition_start_z = self.z
+                self.flower_marker.opacity = 0.0
+                print(f"[蝶] 離陸開始")
+            else:
+                # 休憩中は微かに揺れる程度
+                flutter = math.sin(t * 3) * 0.02
+                self.z = self.rest_z + flutter
+        
+        elif self.state == "taking_off":
+            # 離陸中（1.5秒かけて飛び立つ）
+            takeoff_duration = 1.5
+            elapsed = t - self.state_start_time
+            
+            if elapsed >= takeoff_duration:
+                self.state = "flying"
+                self.state_start_time = t
+                self.next_rest_time = t + random.uniform(
+                    butterfly_rest_interval_min,
+                    butterfly_rest_interval_max
+                )
+                print(f"[蝶] 飛行再開 → 次の休憩: {self.next_rest_time - t:.1f}秒後")
+            else:
+                # イージングで上昇
+                progress = elapsed / takeoff_duration
+                eased = 1 - pow(1 - progress, 3)
+                
+                target_z = butterfly_z_base
+                self.z = self.transition_start_z + (target_z - self.transition_start_z) * eased
+                
+                # XY方向にも少し動き始める
+                self.x += math.cos(self.heading) * butterfly_speed * dt * eased
+                self.y += math.sin(self.heading) * butterfly_speed * dt * eased
+        
+        # ========================================================
+        # 3) 共通処理
+        # ========================================================
+        # ノイズ時間を進める
+        self.noise_time += dt
+        
+        # 表示を更新
+        self.visual.pos = vector(self.x, self.y, self.z)
+        self.visual_2d.pos = vector(self.x, self.y, 0.2)
+        
+        # 花のマーカー位置を更新
+        if self.state in ["landing", "resting"]:
+            self.flower_marker.pos = vector(self.rest_x, self.rest_y, 0)
+        
+        # 状態に応じて蝶の色を変える
+        if self.state == "resting":
+            self.visual.color = vector(1, 0.5, 0.8)
+            self.visual.radius = 0.12
+        else:
+            self.visual.color = color.magenta
+            self.visual.radius = 0.15
+    
+    def is_resting(self):
+        return self.state in ["resting", "landing"]
+    
+    def is_flying(self):
+        return self.state == "flying"
+    
+    def get_state(self):
+        return self.state
+    
+    def set_visible(self, visible):
+        self.visual.visible = visible
+        self.visual_2d.visible = visible
+        if not visible:
+            self.flower_marker.opacity = 0.0
+    
+    def get_position(self):
+        return (self.x, self.y, self.z)
+    
 
 # ─── Audience クラス定義（頭に球、円柱を 0.3m 短く、2D は下レイヤー） ─────────
 class Audience:
@@ -4376,6 +4730,281 @@ while True:
             ag.display()
             send_queue.put(ag)
 
+   # ─── 見えない蝶々モード ────────────────────────────────
+    elif mode_menu.selected == "見えない蝶々モード":
+        # ========================================================
+        # 見えない蝶々モードの初期化
+        # ========================================================
+        detect_radius = detect_radius_butterfly
+        
+        if not hasattr(mode_menu, 'butterfly_initialized') or not mode_menu.butterfly_initialized:
+            print(f"[見えない蝶々モード] 初期化開始")
+            mode_menu.butterfly_initialized = True
+            mode_menu.butterfly_transition_start = sim_time
+            mode_menu.butterfly_transition_duration = 2.0
+            
+            # 蝶のインスタンスを作成
+            mode_menu.butterfly = InvisibleButterfly(centerX, centerY, span * 0.4)
+            mode_menu.butterfly.set_visible(butterfly_visible)
+            mode_menu.butterfly.initialize_timing(sim_time)
+            
+            # 各エージェントの開始状態を保存
+            for ag in agents:
+                ag.butterfly_start_z = ag.z
+                ag.butterfly_start_yaw = ag.yaw
+                ag.butterfly_start_pitch = ag.pitch
+                ag.butterfly_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
+                
+                # 逃げる方向（flying時用）
+                ag.butterfly_escape_direction = 1 if random.random() > 0.5 else -1
+                
+                # スムーズな移動のためのターゲットZ
+                ag.butterfly_current_target_z = ag.z
+                
+                # ★前回の状態を記憶（状態遷移検出用）
+                ag.butterfly_prev_state = "flying"
+                
+                print(f"  Agent {ag.node_id}: z={ag.butterfly_start_z:.2f}")
+        
+        # 他のモードの初期化フラグをリセット
+        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "見えない蝶々モード":
+            mode_menu.fish_mode_initialized = False
+            mode_menu.shimmer_initialized = False
+            mode_menu.tenge_initialized = False
+            mode_menu.ceiling_mode_initialized = False
+            mode_menu.firefly_initialized = False
+        
+        # トランジション計算
+        transition_elapsed = sim_time - getattr(mode_menu, 'butterfly_transition_start', sim_time)
+        transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'butterfly_transition_duration', 2.0))
+        
+        if transition_progress < 0.5:
+            eased_progress = 4 * transition_progress * transition_progress * transition_progress
+        else:
+            eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
+        
+        in_transition = transition_progress < 1.0
+        
+        # ========================================================
+        # 蝶の更新
+        # ========================================================
+        butterfly = mode_menu.butterfly
+        butterfly.update(sim_time, dt)
+        bx, by, bz = butterfly.get_position()
+        butterfly_state = butterfly.get_state()
+        is_resting = butterfly.is_resting()
+        
+        # ========================================================
+        # 各エージェントの更新
+        # ========================================================
+        for ag in agents:
+            # 蝶との距離を計算
+            dx = bx - ag.x
+            dy = by - ag.y
+            dz = bz - ag.z
+            dist_xy = math.hypot(dx, dy)
+            dist_3d = math.sqrt(dx*dx + dy*dy + dz*dz)
+            
+            # ========================================================
+            # 向き（Yaw/Pitch）の計算 - 蝶を追跡
+            # ========================================================
+            target_yaw = math.degrees(math.atan2(dy, dx))
+            target_pitch = math.degrees(math.atan2(dz, dist_xy)) if dist_xy > 0.01 else 0
+            target_pitch = max(-60, min(60, target_pitch))
+            
+            if in_transition:
+                k = min(1.0, ease_speed * dt * eased_progress)
+                ag.pitch = ag.butterfly_start_pitch + (target_pitch - ag.butterfly_start_pitch) * eased_progress
+            else:
+                # ★休憩中は少し速く追従（興味を持って見つめる感じ）
+                track_speed = 3.0 if is_resting else 2.0
+                k = min(1.0, ease_speed * dt * track_speed)
+                dpitch = target_pitch - ag.pitch
+                ag.pitch += dpitch * k
+            
+            dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+            ag.yaw += dyaw * k
+            
+            ag.actual_pitch = ag.pitch
+            
+            # ========================================================
+            # Z軸の振る舞い（状態に応じて切り替え）
+            # ========================================================
+            if in_transition:
+                # トランジション中は基準高さへ移動
+                ag.z = ag.butterfly_start_z + (butterfly_base_z_flying - ag.butterfly_start_z) * eased_progress
+                ag.butterfly_current_target_z = ag.z
+            else:
+                # ★状態遷移時の処理
+                if ag.butterfly_prev_state != butterfly_state:
+                    if butterfly_state == "resting":
+                        # 飛行→休憩: 逃げる方向をリセット
+                        pass
+                    elif butterfly_state == "flying" and ag.butterfly_prev_state == "resting":
+                        # 休憩→飛行: 逃げる方向を再設定
+                        z_diff = ag.z - bz
+                        ag.butterfly_escape_direction = 1 if z_diff > 0 else -1
+                    ag.butterfly_prev_state = butterfly_state
+                
+                # 影響度の計算（距離に基づく、smoothstep）
+                influence_radius = butterfly_funnel_radius if is_resting else butterfly_z_influence_radius
+                
+                if dist_xy < influence_radius:
+                    t = dist_xy / influence_radius
+                    influence = 1.0 - (t * t * (3.0 - 2.0 * t))
+                else:
+                    influence = 0.0
+                
+                if is_resting or butterfly_state == "landing":
+                    # ========================================================
+                    # 休憩中・着陸中: 逆円錐型に近づく
+                    # ========================================================
+                    # 半径1m以内 → 1.5m（最低点）
+                    # 半径1m〜5m → 1.5m〜2.4m（段階的に高く）
+                    # 半径5m以上 → 2.4m（最高点）
+                    
+                    if dist_xy <= butterfly_funnel_inner_radius:
+                        # 内側（半径1m以内）: 最低点で固定
+                        funnel_z = butterfly_funnel_min_z
+                    elif dist_xy >= butterfly_funnel_radius:
+                        # 外側（半径5m以上）: 最高点で固定
+                        funnel_z = butterfly_funnel_max_z
+                    else:
+                        # 中間（半径1m〜5m）: より急な上昇カーブ
+                        t = (dist_xy - butterfly_funnel_inner_radius) / (butterfly_funnel_radius - butterfly_funnel_inner_radius)
+                        # ★easeOutQuadで早めに高くなる
+                        t_curved = 1.0 - (1.0 - t) * (1.0 - t)
+                        funnel_z = butterfly_funnel_min_z + (butterfly_funnel_max_z - butterfly_funnel_min_z) * t_curved
+                    
+                    target_z = funnel_z
+                    
+                    # 近いものほど強く・速く引き寄せる
+                    if dist_xy <= butterfly_funnel_inner_radius:
+                        ease_to_funnel = 0.05  # 内側は速めに
+                    else:
+                        ease_to_funnel = 0.02 + 0.02 * (1.0 - min(1.0, dist_xy / butterfly_funnel_radius))
+                    
+                    ag.butterfly_current_target_z += (target_z - ag.butterfly_current_target_z) * ease_to_funnel
+                    
+                else:
+                    # ========================================================
+                    # 飛行中・離陸中: 球体/ドーム型に距離を取る
+                    # ========================================================
+                    base_z = butterfly_base_z_flying
+                    
+                    # 逃げる方向の更新（ヒステリシス付き）
+                    z_diff_from_butterfly = ag.z - bz
+                    if abs(z_diff_from_butterfly) > 0.4:
+                        ag.butterfly_escape_direction = 1 if z_diff_from_butterfly > 0 else -1
+                    
+                    # 逃げる量を計算
+                    escape_amount = influence * butterfly_z_influence_strength_flying
+                    target_z = base_z + ag.butterfly_escape_direction * escape_amount
+                    
+                    # ★離陸直後は素早く離れる
+                    if butterfly_state == "taking_off":
+                        ease_speed_repel = 0.06
+                    else:
+                        ease_speed_repel = 0.03
+                    
+                    ag.butterfly_current_target_z += (target_z - ag.butterfly_current_target_z) * ease_speed_repel
+                
+                # ★実際のZはさらにゆっくりターゲットに追従
+                z_ease = 0.08
+                ag.z += (ag.butterfly_current_target_z - ag.z) * z_ease
+                
+                # 範囲制限
+                ag.z = max(minZ + 0.2, min(maxZ - 0.1, ag.z))
+            
+            # ========================================================
+            # LED色の計算（状態と距離に基づく）
+            # ========================================================
+            dist_normalized = (dist_3d - butterfly_color_distance_near) / (butterfly_color_distance_far - butterfly_color_distance_near)
+            dist_normalized = max(0.0, min(1.0, dist_normalized))
+            
+            # ★状態に応じた色を選択
+            if is_resting:
+                # 休憩中は温かみのある色
+                color_near = butterfly_color_resting_near
+                color_far = butterfly_color_resting_far
+                # 近いほどより明るく（興味を持って見つめる感じ）
+                brightness_boost = 0.2 * (1.0 - dist_normalized)
+            else:
+                # 飛行中は通常の色
+                color_near = butterfly_color_near
+                color_far = butterfly_color_far
+                brightness_boost = 0.0
+            
+            target_color = vector(
+                color_near.x + (color_far.x - color_near.x) * dist_normalized,
+                color_near.y + (color_far.y - color_near.y) * dist_normalized,
+                color_near.z + (color_far.z - color_near.z) * dist_normalized
+            )
+            
+            brightness = butterfly_brightness_near + (butterfly_brightness_far - butterfly_brightness_near) * dist_normalized
+            brightness = min(1.0, brightness + brightness_boost)
+            
+            final_color = target_color * brightness
+            
+            if in_transition:
+                ag.current_color = vector(
+                    ag.butterfly_start_color.x + (final_color.x - ag.butterfly_start_color.x) * eased_progress,
+                    ag.butterfly_start_color.y + (final_color.y - ag.butterfly_start_color.y) * eased_progress,
+                    ag.butterfly_start_color.z + (final_color.z - ag.butterfly_start_color.z) * eased_progress
+                )
+            else:
+                # ★状態遷移時は少し速く色を変える
+                color_ease = 0.15 if butterfly_state in ["landing", "taking_off"] else 0.1
+                ag.current_color += (final_color - ag.current_color) * color_ease
+            
+            # ========================================================
+            # 自律モード（観客検出は後回し）
+            # ========================================================
+            ag.autonomous_mode = False
+            ag.update_autonomous_indicator()
+            
+            # ========================================================
+            # ジオメトリ更新
+            # ========================================================
+            axis = ag.compute_axis() * agent_length
+            ctr = vector(ag.x, ag.y, ag.z)
+            ag.body.pos = ctr - axis/2
+            ag.body.axis = axis
+            ag.cable.pos = ctr
+            ag.cable.axis = vector(0, 0, maxZ - ag.z)
+            
+            u = axis.norm()
+            for ld3, ld2, offset in ag.leds:
+                ld3.pos = ctr + u * (agent_length * offset)
+                ld2.pos = vector(
+                    ag.x + u.x * (agent_length * offset),
+                    ag.y + u.y * (agent_length * offset),
+                    0
+                )
+            
+            ag.body.color = ag.current_color
+            for ld3, ld2, _ in ag.leds:
+                ld3.color = ld2.color = ag.current_color
+            
+            # ダウンライト
+            ag.downlight_brightness = brightness * 0.3
+            update_downlight_display(ag)
+        
+        # ========================================================
+        # OSC送信
+        # ========================================================
+        osc_client_max.send_message('/butterfly_pos', [bx, by, bz])
+        osc_client_max.send_message('/butterfly_state', 
+            0 if butterfly_state == "flying" else 
+            1 if butterfly_state == "landing" else 
+            2 if butterfly_state == "resting" else 3)
+        
+        # ========================================================
+        # 描画 & MQTT 送信
+        # ========================================================
+        for ag in agents:
+            ag.display()
+            send_queue.put(ag)
     # メインループの既存のelif文の後に追加：
     elif mode_menu.selected == "マニュアルモード":
         # マニュアルモードの処理
@@ -4434,3 +5063,9 @@ while True:
     
     if mode_menu.selected != "ホタルモード":
         mode_menu.firefly_initialized = False   
+
+    if mode_menu.selected != "見えない蝶々モード":
+        mode_menu.butterfly_initialized = False
+        # 蝶を非表示にする
+        if hasattr(mode_menu, 'butterfly') and mode_menu.butterfly:
+            mode_menu.butterfly.set_visible(False)
