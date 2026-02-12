@@ -25,7 +25,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "lab"  # "venue" or else
+place = "venue"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -263,31 +263,36 @@ butterfly_color_resting_near = vector(1.0, 0.3, 0.5)
 butterfly_color_resting_far = vector(0.9, 0.6, 0.3)
 
 # ★蝶の可視化（デバッグ用）
-butterfly_visible = True  # True: 赤点を表示, False: 非表示
+butterfly_visible = False  # True: 赤点を表示, False: 非表示
 
 detect_radius_butterfly = 0.0
 # ========================================================
 # ホタルモード用パラメータ（グローバル）
 # ========================================================
 # 基本発光パラメータ
-firefly_base_period = 3.5        # 基本発光周期[秒]
-firefly_period_variance = 0.3    # 周期の個体差（±40%に拡大）
-firefly_flash_rise = 0.05        # 発光立ち上がり時間（短く）
-firefly_flash_hold = 0.1         # 発光維持時間（短く）
-firefly_flash_decay = 0.2        # 発光減衰時間（短く）
-# 合計: 0.05 + 0.1 + 0.2 = 0.35秒
+firefly_base_period = 4.0        # 基本発光周期[秒]
+firefly_period_variance = 0.4    # 周期の個体差（±40%）
+firefly_flash_rise = 0.05        # 発光立ち上がり時間
+firefly_flash_hold = 0.1         # 発光維持時間
+firefly_flash_decay = 0.2        # 発光減衰時間
 
 # 同期パラメータ（Kuramotoモデル）
-# より強い同期を促すパラメータセット
-firefly_coupling_strength = 0.3  # 結合強度を上げる（0.15→0.25）
-firefly_coupling_radius = 3.5     # 影響半径も少し広げる（2.5→3.0）
-firefly_phase_shift = 0.1        # 位相シフト量も上げる（0.1→0.15）
-firefly_fov_angle = 150.0         # 視野角（前方180°）
+firefly_coupling_strength = 0.3  # 結合強度
+firefly_coupling_radius = 3.0     # 影響を受ける半径[m]
+firefly_phase_shift = 0.15        # 光を見た時の位相シフト量
+firefly_fov_angle = 120.0          # 視野角[度]（前方90°に変更）
 
 # 群れと個の分離パラメータ
 firefly_isolation_threshold = 3.5  # これ以上離れると孤立とみなす[m]
 firefly_isolation_drift = 0.02     # 孤立時の位相ドリフト速度
-firefly_sync_threshold = 0.15      # 位相差がこれ以下なら同期とみなす
+
+# ★ 向き制御パラメータ（新規）
+firefly_sync_high_threshold = 0.9   # これ以上同期したら向きを変える
+firefly_sync_low_threshold = 0.4    # これ以下に孤立したら向きを変える
+firefly_turn_probability = 0.02     # 毎フレームの方向転換確率（条件満たした時）
+firefly_turn_speed = 60.0           # 方向転換速度[度/秒]
+firefly_turn_duration = 1.5         # 方向転換にかける時間[秒]
+firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きいほど滑らか）
 
 # 高さ動作パラメータ
 firefly_z_base = 2.0              # 基準高さ
@@ -295,16 +300,16 @@ firefly_z_amplitude = 0.3         # 高さの振幅
 firefly_z_period = 8.0            # 高さ変動の周期[秒]
 firefly_z_noise_scale = 0.5       # 高さのノイズスケール
 
-# ヨー回転パラメータ（新規）
-firefly_yaw_speed = 15.0          # 基本回転速度[度/秒]
+# ヨー回転パラメータ（通常時の微小な揺らぎ）
+firefly_yaw_wander_speed = 5.0    # 通常時のゆるやかな回転[度/秒]
 firefly_yaw_noise_scale = 0.3     # ノイズによる回転変化
 
 # 色パラメータ
 firefly_color_on = vector(0.7, 1.0, 0.3)   # 発光時の色（黄緑）
-firefly_color_off = vector(0.02, 0.05, 0.01)  # 消灯時の色（暗い緑）
+firefly_color_off = vector(0.02, 0.05, 0.01)  # 消灯時の色
 
 # 検出半径
-detect_radius_firefly = 0.0  # 観客検出は無効
+detect_radius_firefly = 0.0
 
 # ========================================================
 # MQTT セットアップ
@@ -4344,10 +4349,11 @@ while True:
         # マニュアルモードの処理
         # process_manual_commands()
         # apply_manual_mode()
-        
+
         # 表示更新
         for ag in agents:
             ag.autonomous_mode = True
+            ag.pitch = 90.0  # ★補間なしで90度を送信するため、内部値も90度に設定
             # ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
             ag.z = random.uniform(1.8, 1.95)  # 高さをランダムに設定
             ag.current_color.x = random.uniform(0.8, 0.83)
@@ -4378,34 +4384,30 @@ while True:
                 ag.firefly_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
                 
                 # ホタル固有のパラメータを初期化
-                # 固有周期（個体差あり：±40%）
                 period_factor = 1.0 + random.uniform(-firefly_period_variance, firefly_period_variance)
                 ag.firefly_natural_period = firefly_base_period * period_factor
-                
-                # 位相（0.0-1.0、ランダム開始）
                 ag.firefly_phase = random.random()
-                
-                # 前回の発光時刻
                 ag.firefly_last_flash = -999.0
-                
-                # 発光中フラグと輝度
                 ag.firefly_flashing = False
                 ag.firefly_flash_start = -999.0
                 ag.firefly_brightness = 0.0
                 
-                # 孤立度（0.0=群れの中、1.0=完全孤立）
+                # 同期率（移動平均で滑らかに）
+                ag.firefly_sync_rate = 0.5  # 初期値は中間
                 ag.firefly_isolation = 0.0
                 
-                # 高さ用の位相（個体ごとに異なる）
+                # ★ 向き制御用の状態
+                ag.firefly_turning = False           # 方向転換中フラグ
+                ag.firefly_turn_start = -999.0       # 方向転換開始時刻
+                ag.firefly_turn_target = ag.yaw      # 目標方向
+                ag.firefly_turn_reason = ""          # 転換理由（デバッグ用）
+                
+                # 高さ・ノイズ用
                 ag.firefly_z_phase = random.random() * 2 * math.pi
                 ag.firefly_z_noise_offset = random.random() * 1000
-                
-                # ヨー回転用のノイズオフセット（個体ごとに異なる）
                 ag.firefly_yaw_noise_offset = random.random() * 1000
-                ag.firefly_yaw_direction = random.choice([-1, 1])  # 回転方向
                 
-                print(f"  Agent {ag.node_id}: period={ag.firefly_natural_period:.2f}s (factor={period_factor:.2f}), "
-                      f"initial_phase={ag.firefly_phase:.2f}")
+                print(f"  Agent {ag.node_id}: period={ag.firefly_natural_period:.2f}s")
         
         # 他のモードの初期化フラグをリセット
         if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "ホタルモード":
@@ -4429,43 +4431,33 @@ while True:
         # 視野角判定用のヘルパー関数
         # ========================================================
         def is_in_field_of_view(observer, target, fov_degrees):
-            """
-            observerの視野内にtargetがいるかどうか判定
-            observer: 観察者のエージェント
-            target: 対象のエージェント
-            fov_degrees: 視野角（度）
-            """
-            # 観察者から対象への方向ベクトル
             dx = target.x - observer.x
             dy = target.y - observer.y
             
-            # 観察者の向いている方向（yawから計算）
             observer_dir_x = math.cos(math.radians(observer.yaw))
             observer_dir_y = math.sin(math.radians(observer.yaw))
             
-            # 対象への方向を正規化
             dist = math.hypot(dx, dy)
-            if dist < 0.01:  # 非常に近い場合は視野内とみなす
-                return True
+            if dist < 0.01:
+                return True, 0.0
             
             target_dir_x = dx / dist
             target_dir_y = dy / dist
             
-            # 内積で角度を計算
             dot = observer_dir_x * target_dir_x + observer_dir_y * target_dir_y
-            dot = max(-1.0, min(1.0, dot))  # 数値誤差対策
-            angle = math.degrees(math.acos(dot))
+            dot = max(-1.0, min(1.0, dot))
+            view_angle = math.degrees(math.acos(dot))  # ★ angle → view_angle に変更
             
-            # 視野角の半分以内なら視野内
-            return angle <= fov_degrees / 2.0
+            return view_angle <= fov_degrees / 2.0, view_angle  # ★ ここも変更
         
         # ========================================================
-        # 近傍計算と孤立度の更新
+        # 近傍計算と同期率の更新
         # ========================================================
         if not in_transition:
             for ag in agents:
-                neighbors_in_range = []
-                neighbors_in_fov = []  # 視野内の近傍
+                neighbors_in_fov = []
+                flashing_in_fov = 0
+                total_in_fov = 0
                 
                 for other in agents:
                     if other is ag:
@@ -4473,20 +4465,38 @@ while True:
                     dist = math.hypot(ag.x - other.x, ag.y - other.y)
                     
                     if dist < firefly_coupling_radius:
-                        neighbors_in_range.append((other, dist))
+                        in_fov, view_angle = is_in_field_of_view(ag, other, firefly_fov_angle)
                         
-                        # 視野内判定
-                        if is_in_field_of_view(ag, other, firefly_fov_angle):
-                            neighbors_in_fov.append((other, dist))
+                        if in_fov:
+                            neighbors_in_fov.append((other, dist, view_angle))
+                            total_in_fov += 1
+                            
+                            # 位相が近いかチェック（同期判定）
+                            phase_diff = abs(other.firefly_phase - ag.firefly_phase)
+                            if phase_diff > 0.5:
+                                phase_diff = 1.0 - phase_diff
+                            
+                            # 位相差が0.15以内なら同期とみなす
+                            if phase_diff < 0.15:
+                                flashing_in_fov += 1
                 
-                ag.firefly_neighbors = neighbors_in_range
-                ag.firefly_neighbors_in_fov = neighbors_in_fov  # 視野内のみ
+                ag.firefly_neighbors_in_fov = neighbors_in_fov
                 
-                # 孤立度の計算（視野内の近傍で判定）
+                # ★ 同期率の計算（視野内で同期している割合）
+                if total_in_fov > 0:
+                    raw_sync_rate = flashing_in_fov / total_in_fov
+                else:
+                    raw_sync_rate = 0.0  # 誰も見えない = 孤立
+                
+                # 移動平均で滑らかに更新
+                ag.firefly_sync_rate = (ag.firefly_sync_rate * firefly_sync_memory + 
+                                        raw_sync_rate * (1.0 - firefly_sync_memory))
+                
+                # 孤立度も更新（視野内の近傍数に基づく）
                 if len(neighbors_in_fov) == 0:
                     ag.firefly_isolation = 1.0
                 else:
-                    min_dist = min(d for _, d in neighbors_in_fov)
+                    min_dist = min(d for _, d, _ in neighbors_in_fov)
                     ag.firefly_isolation = min(1.0, min_dist / firefly_isolation_threshold)
         
         # ========================================================
@@ -4494,20 +4504,76 @@ while True:
         # ========================================================
         for ag in agents:
             # ========================================================
-            # ヨー回転の更新（ランダムにくるくる）
+            # ★ 向き制御のロジック
             # ========================================================
             if not in_transition:
-                # Perlinノイズで回転速度を変化させる
-                yaw_noise = pnoise1(ag.firefly_yaw_noise_offset + sim_time * firefly_yaw_noise_scale)
+                # 方向転換中の処理
+                if ag.firefly_turning:
+                    turn_elapsed = sim_time - ag.firefly_turn_start
+                    
+                    if turn_elapsed < firefly_turn_duration:
+                        # 目標方向に向かってイージング
+                        dyaw = ((ag.firefly_turn_target - ag.yaw + 540) % 360) - 180
+                        turn_speed = firefly_turn_speed * dt
+                        
+                        if abs(dyaw) < turn_speed:
+                            ag.yaw = ag.firefly_turn_target
+                        else:
+                            ag.yaw += turn_speed if dyaw > 0 else -turn_speed
+                        
+                        ag.yaw = ag.yaw % 360.0
+                    else:
+                        # 方向転換完了
+                        ag.firefly_turning = False
+                        print(f"[ホタル] ID{ag.node_id} 方向転換完了 (理由: {ag.firefly_turn_reason})")
                 
-                # 回転速度（-1〜+1のノイズに基づく）
-                # たまに方向転換
-                if random.random() < 0.002:  # 0.2%の確率で方向転換
-                    ag.firefly_yaw_direction *= -1
-                
-                yaw_speed = firefly_yaw_speed * (0.5 + 0.5 * yaw_noise) * ag.firefly_yaw_direction
-                ag.yaw += yaw_speed * dt
-                ag.yaw = ag.yaw % 360.0
+                else:
+                    # 方向転換のトリガー判定
+                    should_turn = False
+                    turn_reason = ""
+                    
+                    # 条件1: 同期率が高すぎる → 群れから離脱したい
+                    if ag.firefly_sync_rate > firefly_sync_high_threshold:
+                        if random.random() < firefly_turn_probability:
+                            should_turn = True
+                            turn_reason = f"高同期離脱 (sync={ag.firefly_sync_rate:.2f})"
+                    
+                    # 条件2: 同期率が低すぎる → 群れを探したい
+                    elif ag.firefly_sync_rate < firefly_sync_low_threshold:
+                        if random.random() < firefly_turn_probability * 1.5:  # 孤立時は少し確率高め
+                            should_turn = True
+                            turn_reason = f"孤立探索 (sync={ag.firefly_sync_rate:.2f})"
+                    
+                    if should_turn:
+                        ag.firefly_turning = True
+                        ag.firefly_turn_start = sim_time
+                        ag.firefly_turn_reason = turn_reason
+                        
+                        # 目標方向を決定
+                        if ag.firefly_sync_rate > firefly_sync_high_threshold:
+                            # 高同期時: 視野外の方向へ（群れから離れる）
+                            # 現在の向きから90〜180度回転
+                            turn_amount = random.uniform(90, 180) * random.choice([-1, 1])
+                            ag.firefly_turn_target = (ag.yaw + turn_amount) % 360.0
+                        else:
+                            # 孤立時: ランダムな方向へ（群れを探す）
+                            # または、最も近い他のホタルがいる方向へ
+                            if hasattr(ag, 'firefly_neighbors_in_fov') and len(ag.firefly_neighbors_in_fov) > 0:
+                                # 視野内に誰かいるなら、視野外を探す
+                                turn_amount = random.uniform(60, 120) * random.choice([-1, 1])
+                                ag.firefly_turn_target = (ag.yaw + turn_amount) % 360.0
+                            else:
+                                # 完全に孤立しているなら、ランダムに探す
+                                ag.firefly_turn_target = random.uniform(0, 360)
+                        
+                        print(f"[ホタル] ID{ag.node_id} 方向転換開始: {turn_reason}, "
+                              f"目標={ag.firefly_turn_target:.1f}°")
+                    
+                    else:
+                        # 通常時: ゆるやかなランダム回転
+                        yaw_noise = pnoise1(ag.firefly_yaw_noise_offset + sim_time * firefly_yaw_noise_scale)
+                        ag.yaw += yaw_noise * firefly_yaw_wander_speed * dt
+                        ag.yaw = ag.yaw % 360.0
             
             # ========================================================
             # 位相の更新
@@ -4515,54 +4581,57 @@ while True:
             if in_transition:
                 pass
             else:
-                # 1) 自然な位相の進行（個体固有の周期に基づく）
                 phase_increment = dt / ag.firefly_natural_period
                 
-                # 2) 孤立している場合は位相がドリフトする
+                # 孤立時の位相ドリフト
                 if ag.firefly_isolation > 0.5:
                     drift = firefly_isolation_drift * ag.firefly_isolation * random.uniform(-1, 1)
                     phase_increment += drift
                 
-                # 3) 視野内で発光中のホタルからの影響（Kuramoto型結合）
+                # 視野内で発光中のホタルからの影響
                 if hasattr(ag, 'firefly_neighbors_in_fov'):
-                    for other, dist in ag.firefly_neighbors_in_fov:
-                        # 距離による減衰
+                    for other, dist, view_angle in ag.firefly_neighbors_in_fov:
                         distance_factor = 1.0 - (dist / firefly_coupling_radius)
                         
-                        # 相手が発光中なら位相を引き寄せる
+                        # 視野の中心に近いほど影響が強い（視野角の半分で正規化）
+                        angle_factor = 1.0 - (view_angle / (firefly_fov_angle / 2.0))
+                        angle_factor = max(0.0, angle_factor)
+                        
                         if other.firefly_flashing:
-                            # 位相差を計算（-0.5 to 0.5）
                             phase_diff = other.firefly_phase - ag.firefly_phase
                             if phase_diff > 0.5:
                                 phase_diff -= 1.0
                             elif phase_diff < -0.5:
                                 phase_diff += 1.0
                             
-                            # 結合による位相シフト
-                            coupling = firefly_coupling_strength * distance_factor * firefly_phase_shift
+                            # 距離と角度の両方を考慮した結合
+                            coupling = (firefly_coupling_strength * 
+                                       distance_factor * 
+                                       angle_factor * 
+                                       firefly_phase_shift)
                             phase_increment += coupling * math.sin(2 * math.pi * phase_diff)
                 
-                # 位相を更新（0.0-1.0にラップ）
                 ag.firefly_phase += phase_increment
                 if ag.firefly_phase >= 1.0:
                     ag.firefly_phase -= 1.0
-                    # 位相が1.0を超えたら発光開始
                     ag.firefly_flashing = True
                     ag.firefly_flash_start = sim_time
                     ag.firefly_last_flash = sim_time
-                    # ★ OSCで発光開始を通知（id, y座標）
+                    
+                    # ★ OSCで発光開始を通知
                     osc_client_max.send_message('/firefly_flash', [
-                        int(ag.node_id), 
+                        int(ag.node_id),
                         float(ag.x),
-                        float(ag.y), 
+                        float(ag.y),
                         float(ag.z),
-                        float(1.0 - ag.firefly_isolation)  # 同期度（0=孤立、1=群れの中）
+                        float(ag.firefly_isolation)  # 0.0=群れの中、1.0=孤立
                     ])
+                                     
                 elif ag.firefly_phase < 0.0:
                     ag.firefly_phase += 1.0
             
             # ========================================================
-            # 発光の輝度計算（短い発光）
+            # 発光の輝度計算
             # ========================================================
             total_flash_duration = firefly_flash_rise + firefly_flash_hold + firefly_flash_decay
             
@@ -4570,24 +4639,19 @@ while True:
                 flash_age = sim_time - ag.firefly_flash_start
                 
                 if flash_age < firefly_flash_rise:
-                    # 立ち上がり（急速に明るく）
                     t = flash_age / firefly_flash_rise
-                    brightness = t * t  # easeInQuad（急に明るく）
+                    brightness = t * t
                 elif flash_age < firefly_flash_rise + firefly_flash_hold:
-                    # 最大輝度維持
                     brightness = 1.0
                 elif flash_age < total_flash_duration:
-                    # 減衰（ゆっくり消える）
                     t = (flash_age - firefly_flash_rise - firefly_flash_hold) / firefly_flash_decay
-                    brightness = 1.0 - t * t  # easeOutQuad
+                    brightness = 1.0 - t * t
                 else:
-                    # 発光終了
                     brightness = 0.0
                     ag.firefly_flashing = False
             else:
                 brightness = 0.0
             
-            # トランジション中は輝度を抑える
             if in_transition:
                 brightness *= eased_progress * 0.3
             
@@ -4625,7 +4689,7 @@ while True:
                 ag.z = max(minZ, min(maxZ, ag.z))
             
             # ========================================================
-            # Pitchの計算（小さく揺らぐ）
+            # Pitchの計算
             # ========================================================
             if in_transition:
                 ag.pitch = ag.firefly_start_pitch + (0 - ag.firefly_start_pitch) * eased_progress
@@ -4640,25 +4704,17 @@ while True:
             ag.actual_pitch = ag.pitch
             
             # ========================================================
-            # 観客検出（視野内の観客を向く）
+            # 観客検出
             # ========================================================
             closest = None
             min_dist = float('inf')
             for p in audiences:
                 d = math.hypot(p.x - ag.x, p.y - ag.y)
                 if d < 2.0 and d < min_dist:
-                    # 視野内判定（観客用の簡易版）
-                    dx = p.x - ag.x
-                    dy = p.y - ag.y
-                    observer_dir_x = math.cos(math.radians(ag.yaw))
-                    observer_dir_y = math.sin(math.radians(ag.yaw))
-                    dist_to_p = math.hypot(dx, dy)
-                    if dist_to_p > 0.01:
-                        dot = (observer_dir_x * dx + observer_dir_y * dy) / dist_to_p
-                        angle = math.degrees(math.acos(max(-1, min(1, dot))))
-                        if angle <= firefly_fov_angle / 2.0:
-                            min_dist = d
-                            closest = p
+                    in_fov, _ = is_in_field_of_view(ag, type('obj', (object,), {'x': p.x, 'y': p.y})(), firefly_fov_angle)
+                    if in_fov:
+                        min_dist = d
+                        closest = p
             
             if closest and not in_transition:
                 dx, dy = closest.x - ag.x, closest.y - ag.y
@@ -4705,7 +4761,7 @@ while True:
             update_downlight_display(ag)
         
         # ========================================================
-        # デバッグ/統計情報（OSC送信）
+        # 統計情報（OSC送信）
         # ========================================================
         phases = [ag.firefly_phase for ag in agents]
         mean_cos = sum(math.cos(2 * math.pi * p) for p in phases) / len(phases)
@@ -4717,11 +4773,16 @@ while True:
         flashing_count = sum(1 for ag in agents if ag.firefly_flashing)
         osc_client_max.send_message('/firefly_flash_count', flashing_count)
         
-        # 個体差の確認用（デバッグ）
-        if random.random() < 0.01:  # 1%の確率でログ出力
-            periods = [ag.firefly_natural_period for ag in agents]
-            print(f"[ホタル] 周期範囲: {min(periods):.2f}s - {max(periods):.2f}s, "
-                  f"同期度: {sync_degree:.2f}, 発光中: {flashing_count}")
+        # 方向転換中のホタル数
+        turning_count = sum(1 for ag in agents if ag.firefly_turning)
+        osc_client_max.send_message('/firefly_turning_count', turning_count)
+        
+        # デバッグログ
+        if random.random() < 0.02:
+            sync_rates = [ag.firefly_sync_rate for ag in agents]
+            print(f"[ホタル] 同期度: {sync_degree:.2f}, "
+                  f"個別sync: min={min(sync_rates):.2f} max={max(sync_rates):.2f}, "
+                  f"転換中: {turning_count}")
         
         # ========================================================
         # 描画 & MQTT 送信
