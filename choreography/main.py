@@ -228,8 +228,8 @@ butterfly_path_noise_speed = 0.2
 # 蝶の状態管理
 butterfly_state = "flying"
 
-# ★飛行時の筒の基準高さ（2m前後）
-butterfly_base_z_flying = 2.0
+# ★飛行時の筒の基準高さ
+butterfly_base_z_flying = 2.3        # flying時の基準高さ
 
 # 花に止まる時のパラメータ
 butterfly_rest_interval_min = 20.0
@@ -247,7 +247,7 @@ butterfly_z_influence_strength_flying = 0.5   # ★少し控えめに（基準�
 butterfly_z_influence_strength_resting = 1.2
 butterfly_funnel_radius = 5.0                 # 影響を受ける最大半径
 butterfly_funnel_inner_radius = 1.0           # ★内側の半径（ここまでは最低点）
-butterfly_funnel_min_z = 1.7                  # ★最低点（半径1m以内）
+butterfly_funnel_min_z = 2.0                  # ★最低点（半径1m以内）- 休憩中
 butterfly_funnel_max_z = 2.4                  # ★最高点（遠いところ）
 
 # 色パラメータ
@@ -295,7 +295,7 @@ firefly_turn_duration = 1.5         # 方向転換にかける時間[秒]
 firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きいほど滑らか）
 
 # 高さ動作パラメータ
-firefly_z_base = 2.0              # 基準高さ
+firefly_z_base = 2.3              # 基準高さ（範囲：約2.0m〜2.6m）
 firefly_z_amplitude = 0.3         # 高さの振幅
 firefly_z_period = 8.0            # 高さ変動の周期[秒]
 firefly_z_noise_scale = 0.5       # 高さのノイズスケール
@@ -1841,9 +1841,9 @@ def apply_manual_mode():
             
             # 本体の色も更新
             ag.body.color = ag.current_color
-            
-            # MQTT送信キューに追加
-            send_queue.put(ag)
+
+            # MQTT送信はメインループで一括処理されるため、ここでは不要
+            # send_queue.put(ag)
     
     # デバッグ：個別制御時に適用されたエージェント数を表示
     if target_id > 0 and applied_count == 0 and random.random() < 0.05:  # 5%の確率で
@@ -4803,7 +4803,15 @@ while True:
             mode_menu.butterfly_initialized = True
             mode_menu.butterfly_transition_start = sim_time
             mode_menu.butterfly_transition_duration = 2.0
-            
+
+            # 注目する観客の初期化（最初は観客がいれば1人選択、いなければNone）
+            if audiences:
+                mode_menu.butterfly_target_audience = random.choice(audiences)
+                print(f"  初期注目対象: 観客 ({mode_menu.butterfly_target_audience.x:.1f}, {mode_menu.butterfly_target_audience.y:.1f})")
+            else:
+                mode_menu.butterfly_target_audience = None
+                print(f"  初期注目対象: 蝶")
+
             # 蝶のインスタンスを作成
             mode_menu.butterfly = InvisibleButterfly(centerX, centerY, span * 0.4)
             mode_menu.butterfly.set_visible(butterfly_visible)
@@ -4867,10 +4875,28 @@ while True:
             dist_3d = math.sqrt(dx*dx + dy*dy + dz*dz)
             
             # ========================================================
-            # 向き（Yaw/Pitch）の計算 - 蝶を追跡
+            # 向き（Yaw/Pitch）の計算 - 観客がいれば観客を、いなければ蝶を追跡
             # ========================================================
-            target_yaw = math.degrees(math.atan2(dy, dx))
-            target_pitch = math.degrees(math.atan2(dz, dist_xy)) if dist_xy > 0.01 else 0
+            # 注目すべきターゲットの座標を決定
+            if hasattr(mode_menu, 'butterfly_target_audience') and mode_menu.butterfly_target_audience:
+                # 観客がターゲット
+                target_x = mode_menu.butterfly_target_audience.x
+                target_y = mode_menu.butterfly_target_audience.y
+                target_z = mode_menu.butterfly_target_audience.height
+            else:
+                # 蝶がターゲット
+                target_x = bx
+                target_y = by
+                target_z = bz
+
+            # ターゲットへの方向を計算
+            dx_target = target_x - ag.x
+            dy_target = target_y - ag.y
+            dz_target = target_z - ag.z
+            dist_xy_target = math.hypot(dx_target, dy_target)
+
+            target_yaw = math.degrees(math.atan2(dy_target, dx_target))
+            target_pitch = math.degrees(math.atan2(dz_target, dist_xy_target)) if dist_xy_target > 0.01 else 0
             target_pitch = max(-60, min(60, target_pitch))
             
             if in_transition:
@@ -4896,13 +4922,22 @@ while True:
                 ag.z = ag.butterfly_start_z + (butterfly_base_z_flying - ag.butterfly_start_z) * eased_progress
                 ag.butterfly_current_target_z = ag.z
             else:
-                # ★状態遷移時の処理
+                # ★状態遷移時の処理（全エージェントで同じ処理が繰り返されるので最初の1回だけ実行）
                 if ag.butterfly_prev_state != butterfly_state:
                     if butterfly_state == "resting":
                         # 飛行→休憩: 逃げる方向をリセット
                         pass
                     elif butterfly_state == "flying" and ag.butterfly_prev_state == "resting":
-                        # 休憩→飛行: 逃げる方向を再設定
+                        # 休憩→飛行: 観客リストから1人をランダムに選択（全エージェント共通）
+                        if ag.idx == 0:  # 最初のエージェントだけが選択を行う
+                            if audiences:
+                                mode_menu.butterfly_target_audience = random.choice(audiences)
+                                print(f"\n[蝶々モード] 新しい注目対象を選択: 観客 ({mode_menu.butterfly_target_audience.x:.1f}, {mode_menu.butterfly_target_audience.y:.1f})")
+                            else:
+                                mode_menu.butterfly_target_audience = None
+                                print(f"\n[蝶々モード] 観客なし、蝶を追跡")
+
+                        # 逃げる方向を再設定
                         z_diff = ag.z - bz
                         ag.butterfly_escape_direction = 1 if z_diff > 0 else -1
                     ag.butterfly_prev_state = butterfly_state
@@ -5055,11 +5090,19 @@ while True:
         # OSC送信
         # ========================================================
         osc_client_max.send_message('/butterfly_pos', [bx, by, bz])
-        osc_client_max.send_message('/butterfly_state', 
-            0 if butterfly_state == "flying" else 
-            1 if butterfly_state == "landing" else 
+        osc_client_max.send_message('/butterfly_state',
+            0 if butterfly_state == "flying" else
+            1 if butterfly_state == "landing" else
             2 if butterfly_state == "resting" else 3)
-        
+
+        # ========================================================
+        # デバッグ: 休憩中の高さを表示（1秒ごとに最初の5体だけ）
+        # ========================================================
+        if butterfly_state == "resting" and int(sim_time) % 1 == 0 and sim_time - int(sim_time) < dt:
+            print(f"\n[蝶々モード - 休憩中] 時刻: {sim_time:.1f}s")
+            for i, ag in enumerate(agents[:5]):
+                print(f"  Agent {ag.node_id}: z={ag.z:.3f}m, target_z={ag.butterfly_current_target_z:.3f}m")
+
         # ========================================================
         # 描画 & MQTT 送信
         # ========================================================
@@ -5071,13 +5114,13 @@ while True:
         # マニュアルモードの処理
         process_manual_commands()
         apply_manual_mode()
-        
-        # 表示更新
+
+        # 表示更新・送信（全エージェントを毎フレーム送信）
         for ag in agents:
-            ag.autonomous_mode = True
+            ag.autonomous_mode = False  # ★マニュアルモードでは手動制御
             ag.display()
             update_downlight_display(ag)  # ← ダウンライト表示を更新
-            send_queue.put(ag)
+            send_queue.put(ag)  # ★コマンドの有無に関わらず全エージェントを送信
 
 
     # 音に対するインタラクティブモード
