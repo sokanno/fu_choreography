@@ -25,7 +25,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "venue"  # "venue" or else
+place = "berlin"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -129,6 +129,20 @@ current_sine_freq = target_sine_freq
 # tilt_angle_deg   = 5.5    # 平面の傾き（°）
 plane_rot_speed  = 0.3     # 回転速度（rad/s）
 plane_angle      = 0.0     # フレームごとに増加
+
+# ─── 自転ステップ回転用パラメータ（全員同期） ──────────────────
+# 面の公転はそのまま。筒の自転(yaw)だけ全員揃ってカクカク動かす
+step_yaw_interval_min = 3.0           # 待機時間の最小値（秒）
+step_yaw_interval_max = 7.0           # 待機時間の最大値（秒）
+step_yaw_angle_min    = 30.0          # 1ステップの回転角度の最小値（度）
+step_yaw_angle_max    = 180.0         # 1ステップの回転角度の最大値（度）
+step_yaw_speed_base   = 90.0          # 自転回転速度の基準値（度/秒）
+step_yaw_speed_dps    = 90.0          # 自転回転速度（実行時にランダム決定）
+
+# グローバルステート（全筒共有）
+step_yaw_state        = "waiting"     # "waiting" or "rotating"
+step_yaw_next_time    = 0.0           # 次の回転開始時刻
+step_yaw_delta        = 0.0           # 今回の回転量（度、符号付き）
 # plane_height     = 2.5     # 平面中心の高さ
 
 # Audience の人数設定（0～10）
@@ -271,15 +285,15 @@ detect_radius_butterfly = 0.0
 # ========================================================
 # 基本発光パラメータ
 firefly_base_period = 4.0        # 基本発光周期[秒]
-firefly_period_variance = 0.4    # 周期の個体差（±40%）
+firefly_period_variance = 0.2    # 周期の個体差（±20%）
 firefly_flash_rise = 0.05        # 発光立ち上がり時間
 firefly_flash_hold = 0.1         # 発光維持時間
 firefly_flash_decay = 0.2        # 発光減衰時間
 
 # 同期パラメータ（Kuramotoモデル）
-firefly_coupling_strength = 0.3  # 結合強度
+firefly_coupling_strength = 0.5  # 結合強度
 firefly_coupling_radius = 3.0     # 影響を受ける半径[m]
-firefly_phase_shift = 0.15        # 光を見た時の位相シフト量
+firefly_phase_shift = 0.25        # 光を見た時の位相シフト量
 firefly_fov_angle = 120.0          # 視野角[度]（前方90°に変更）
 
 # 群れと個の分離パラメータ
@@ -319,6 +333,8 @@ if place == "venue":
     mqtt_client.connect("192.168.1.2", 1883, 60)
 else:
     mqtt_client.connect("127.0.0.1", 1883, 60)
+    # mqtt_client.connect("10.0.1.218", 1883, 60)
+
 mqtt_client.loop_start()
 
 # ========================================================
@@ -1924,7 +1940,7 @@ while True:
     sim_time   += dt
     noise_time += noiseSpeed
     angle      += rotationSpeed
-    plane_angle += plane_rot_speed * dt   # ← 平面回転角を更新
+    plane_angle += plane_rot_speed * dt   # ← 平面回転角を更新（連続回転）
 
     # MaxからのOSCメッセージを更新
     separationFactor     = params["separation"]
@@ -2065,10 +2081,18 @@ while True:
             mode_menu.ceiling_mode_initialized = True
             mode_menu.ceiling_transition_start = sim_time
             mode_menu.ceiling_transition_duration = 2.0  # 2秒のトランジション
-            
+
             # 平面の初期角度を設定（現在の状態から開始）
             if not hasattr(mode_menu, 'plane_angle_saved'):
                 mode_menu.plane_angle_saved = plane_angle
+
+            # 自転ステップ回転を初期化（グローバル）
+            step_yaw_state = "waiting"
+            step_yaw_next_time = sim_time + random.uniform(step_yaw_interval_min, step_yaw_interval_max)
+            step_yaw_delta = 0.0
+            for ag in agents:
+                ag.step_yaw_target = ag.yaw
+            print(f"[自転ステップ] 初期化完了")
             
             # ★影の波パラメータの初期化
             mode_menu.shadow_waves = []  # 影の波のリスト
@@ -2178,6 +2202,33 @@ while True:
         osc_client_max.send_message('/cos', cos_val)
 
         # ========================================================
+        # 自転ステップ回転のグローバルタイマー管理
+        # ========================================================
+        if not in_transition:
+            if step_yaw_state == "waiting" and sim_time >= step_yaw_next_time:
+                # 全員一斉に回転開始：同じ角度・同じ方向
+                delta_deg = random.uniform(step_yaw_angle_min, step_yaw_angle_max)
+                direction = random.choice([1, -1])
+                step_yaw_delta = delta_deg * direction
+                for ag in agents:
+                    ag.step_yaw_target = ag.yaw + step_yaw_delta
+                step_yaw_speed_dps = random.uniform(step_yaw_speed_base * 0.5, step_yaw_speed_base * 2.0)
+                step_yaw_state = "rotating"
+                print(f"[自転ステップ] 全員回転開始: {step_yaw_delta:+.1f}° @ {step_yaw_speed_dps:.0f}°/s")
+            elif step_yaw_state == "rotating":
+                # 全員が到達したか確認
+                all_done = True
+                for ag in agents:
+                    dyaw = ((ag.step_yaw_target - ag.yaw + 540) % 360) - 180
+                    if abs(dyaw) > 0.5:
+                        all_done = False
+                        break
+                if all_done:
+                    step_yaw_state = "waiting"
+                    step_yaw_next_time = sim_time + random.uniform(step_yaw_interval_min, step_yaw_interval_max)
+                    print(f"[自転ステップ] 全員到達, 次回まで {step_yaw_next_time - sim_time:.1f}秒")
+
+        # ========================================================
         # 各エージェントごとの処理
         # ========================================================
         for ag, target_z_plane in zip(agents, plane_zs):
@@ -2206,40 +2257,61 @@ while True:
                 target_yaw = degrees(atan2(dy, dx))
                 target_pitch = degrees(atan2(dz, hypot(dx, dy)))
                 target_pitch = max(-60, min(60, target_pitch))  # クランプ
-                
+
                 # 自律モードチェック
                 yaw_diff = abs(((target_yaw - ag.yaw + 540) % 360) - 180)
                 if md < 1.5 and yaw_diff < 30:  # 1.5m以内かつ±30度以内
                     ag.autonomous_mode = True
                 else:
                     ag.autonomous_mode = False
+
+                # 観客がいる場合は従来通りイージングで追従
+                if in_transition:
+                    k = min(1.0, ease_speed * dt * eased_progress)
+                    ag.pitch = ag.ceiling_start_pitch + (target_pitch - ag.ceiling_start_pitch) * eased_progress
+                else:
+                    k = min(1.0, ease_speed * dt)
+                    dpitch = target_pitch - ag.pitch
+                    ag.pitch += dpitch * k
+                dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * k
             else:
-                # 観客がいない場合：斜面を登る方向を向く
+                # 観客がいない場合：自転ステップ回転
                 ag.autonomous_mode = False
-                
+
+                # pitchはuphill方向に追従（従来通り）
                 g_dot_n = -normal.z
                 uphill = (g_dot_n*normal - vector(0,0,-1)).norm()
-                target_yaw = degrees(atan2(uphill.y, uphill.x))
                 target_pitch = degrees(asin(uphill.z))
 
-            # (D) 向きの更新（トランジション対応）
-            if in_transition:
-                # トランジション中は徐々に速度を上げる
-                k = min(1.0, ease_speed * dt * eased_progress)
-                
-                # Pitchは0に向かって補間
-                ag.pitch = ag.ceiling_start_pitch + (target_pitch - ag.ceiling_start_pitch) * eased_progress
-            else:
-                # 通常のイージング
-                k = min(1.0, ease_speed * dt)
-                
-                # Pitchのイージング
-                dpitch = target_pitch - ag.pitch
-                ag.pitch += dpitch * k
-            
-            # Yawのイージング（トランジション中も通常も同じ処理）
-            dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
-            ag.yaw += dyaw * k
+                if in_transition:
+                    k = min(1.0, ease_speed * dt * eased_progress)
+                    ag.pitch = ag.ceiling_start_pitch + (target_pitch - ag.ceiling_start_pitch) * eased_progress
+                else:
+                    k = min(1.0, ease_speed * dt)
+                    dpitch = target_pitch - ag.pitch
+                    ag.pitch += dpitch * k
+
+                # ── yawのステップ回転（全員同期） ──
+                if not hasattr(ag, 'step_yaw_target'):
+                    ag.step_yaw_target = ag.yaw
+
+                if in_transition:
+                    # トランジション中はまだステップ回転しない
+                    pass
+                elif step_yaw_state == "rotating":
+                    # 90°/sec で目標yawに向けて回転
+                    dyaw = ((ag.step_yaw_target - ag.yaw + 540) % 360) - 180
+                    max_step = step_yaw_speed_dps * dt
+                    if abs(dyaw) <= max_step:
+                        ag.yaw = ag.step_yaw_target
+                    else:
+                        ag.yaw += max_step * (1 if dyaw > 0 else -1)
+                else:
+                    # waiting中：targetに留まる
+                    dyaw = ((ag.step_yaw_target - ag.yaw + 540) % 360) - 180
+                    if abs(dyaw) > 0.1:
+                        ag.yaw += dyaw * min(1.0, ease_speed * dt)
             
             # actual_pitchを更新（自律モード用の表示値）
             ag.actual_pitch = ag.pitch
@@ -4395,6 +4467,7 @@ while True:
                 # 同期率（移動平均で滑らかに）
                 ag.firefly_sync_rate = 0.5  # 初期値は中間
                 ag.firefly_isolation = 0.0
+                ag.firefly_phase_deviation = 0.0  # 全体平均位相からの偏差（0=一致, 1=正反対）
                 
                 # ★ 向き制御用の状態
                 ag.firefly_turning = False           # 方向転換中フラグ
@@ -4450,6 +4523,23 @@ while True:
             
             return view_angle <= fov_degrees / 2.0, view_angle  # ★ ここも変更
         
+        # ========================================================
+        # 全体平均位相からの偏差を計算
+        # ========================================================
+        if not in_transition:
+            # 位相は循環値なので、sin/cosの平均で平均位相を求める
+            sum_sin = sum(math.sin(ag.firefly_phase * 2 * math.pi) for ag in agents)
+            sum_cos = sum(math.cos(ag.firefly_phase * 2 * math.pi) for ag in agents)
+            n = len(agents)
+            mean_angle = math.atan2(sum_sin / n, sum_cos / n)  # 平均位相（ラジアン）
+            for ag in agents:
+                ag_angle = ag.firefly_phase * 2 * math.pi
+                diff = abs(ag_angle - mean_angle)
+                if diff > math.pi:
+                    diff = 2 * math.pi - diff
+                # 0（完全一致）〜1（正反対）に正規化
+                ag.firefly_phase_deviation = diff / math.pi
+
         # ========================================================
         # 近傍計算と同期率の更新
         # ========================================================
@@ -4668,10 +4758,17 @@ while True:
                     ag.firefly_start_color.z + (target_color.z - ag.firefly_start_color.z) * eased_progress
                 )
             else:
+                # 位相偏差に応じてRGBで青みを加える（揃ってる=黄色、ずれてる=青い）
+                dev = ag.firefly_phase_deviation  # 0〜1
+                on_color = vector(
+                    firefly_color_on.x * (1.0 - dev * 0.5),   # R下げる
+                    firefly_color_on.y * (1.0 - dev * 0.5),   # G下げる
+                    min(1.0, firefly_color_on.z + dev * 0.7)   # B上げる
+                )
                 ag.current_color = vector(
-                    firefly_color_off.x + (firefly_color_on.x - firefly_color_off.x) * brightness,
-                    firefly_color_off.y + (firefly_color_on.y - firefly_color_off.y) * brightness,
-                    firefly_color_off.z + (firefly_color_on.z - firefly_color_off.z) * brightness
+                    firefly_color_off.x + (on_color.x - firefly_color_off.x) * brightness,
+                    firefly_color_off.y + (on_color.y - firefly_color_off.y) * brightness,
+                    firefly_color_off.z + (on_color.z - firefly_color_off.z) * brightness
                 )
             
             # ========================================================
@@ -4757,7 +4854,7 @@ while True:
             for ld3, ld2, _ in ag.leds:
                 ld3.color = ld2.color = ag.current_color
             
-            ag.downlight_brightness = brightness * 0.5
+            ag.downlight_brightness = 0.0
             update_downlight_display(ag)
         
         # ========================================================
@@ -5082,8 +5179,8 @@ while True:
             for ld3, ld2, _ in ag.leds:
                 ld3.color = ld2.color = ag.current_color
             
-            # ダウンライト
-            ag.downlight_brightness = brightness * 0.3
+            # ダウンライト（オフ）
+            ag.downlight_brightness = 0.0
             update_downlight_display(ag)
         
         # ========================================================
