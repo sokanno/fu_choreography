@@ -25,7 +25,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "venue"  # "venue" or else
+place = "berlin"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -280,6 +280,25 @@ butterfly_color_resting_far = vector(0.9, 0.6, 0.3)
 butterfly_visible = False  # True: 赤点を表示, False: 非表示
 
 detect_radius_butterfly = 0.0
+
+# ========================================================
+# The two of us モード用パラメータ
+# ========================================================
+twofus_descend_speed    = 0.8    # 降下速度 [m/s]
+twofus_target_z         = 2.0    # アクティブ筒の目標高さ [m]
+twofus_bob_min          = 1.8    # 上下動の下限 [m]
+twofus_bob_max          = 2.2    # 上下動の上限 [m]
+twofus_mob_z            = maxZ   # モブの高さ（天井）
+twofus_interaction_dur_min = 4.0   # 交信の最短時間 [s]
+twofus_interaction_dur_max = 12.0  # 交信の最長時間 [s]
+twofus_action_dur_min   = 1.5    # 1アクションの最短持続 [s]
+twofus_action_dur_max   = 4.0    # 1アクションの最長持続 [s]
+twofus_return_speed_min = 0.3    # 帰還速度の最小 [m/s]（名残惜しい）
+twofus_return_speed_max = 2.0    # 帰還速度の最大 [m/s]（怒っている）
+twofus_blink_fast_freq  = 6.0    # 速い点滅の周波数 [Hz]
+twofus_blink_slow_freq  = 0.5    # 遅い点滅の周波数 [Hz]
+twofus_farewell_dur     = 3.0    # 別れの演出時間 [s]
+
 # ========================================================
 # ホタルモード用パラメータ（グローバル）
 # ========================================================
@@ -439,6 +458,7 @@ modes = ["マニュアルモード",
          "回る天井",
          "向き合うモード",
          "ホタルモード",
+         "The two of us",
          "見えない蝶々モード"]
         #  "舞台挨拶モード"]
 mode_menu = menu(
@@ -5206,6 +5226,504 @@ while True:
         for ag in agents:
             ag.display()
             send_queue.put(ag)
+    # ─── The two of us モード ──────────────────────────────
+    elif mode_menu.selected == "The two of us":
+        detect_radius = 0.0
+
+        # ============================================
+        # 初期化
+        # ============================================
+        if not hasattr(mode_menu, 'twofus_initialized') or not mode_menu.twofus_initialized:
+            print(f"[The two of us] 初期化開始")
+            mode_menu.twofus_initialized = True
+            mode_menu.twofus_transition_start = sim_time
+            mode_menu.twofus_transition_duration = 2.0
+
+            # 最初の2台をランダムに選ぶ
+            pair = random.sample(range(len(agents)), 2)
+            mode_menu.twofus_active = pair          # [idx_a, idx_b]
+            mode_menu.twofus_phase = "descending"   # descending → interacting → swapping
+            mode_menu.twofus_swap_target = None      # 交代時の新しい相手idx
+
+            # 交信タイマー
+            mode_menu.twofus_interaction_end = 0.0
+            # アクション管理（各筒独立）
+            mode_menu.twofus_action_a = "face_each_other"
+            mode_menu.twofus_action_b = "face_each_other"
+            mode_menu.twofus_action_end_a = 0.0
+            mode_menu.twofus_action_end_b = 0.0
+            # 帰還速度
+            mode_menu.twofus_return_speed = 1.0
+            # 帰還するのはどちらか（0 or 1, activeリスト内のindex）
+            mode_menu.twofus_leaving = 0
+
+            # 各エージェントに固有色を割り当て（モード中ずっと保持）
+            # 点滅周波数
+            mode_menu.twofus_blink_freq_a = 1.0
+            mode_menu.twofus_blink_freq_b = 1.0
+            # 上下動用Perlinノイズオフセット（各筒独立）
+            mode_menu.twofus_bob_offset_a = random.random() * 1000
+            mode_menu.twofus_bob_offset_b = random.random() * 1000
+            # 別れの演出
+            mode_menu.twofus_farewell_phase = None   # None / "gaze" / "turn_away"
+            mode_menu.twofus_farewell_start = 0.0
+            # 片思い対応: A→Bへの想い、B→Aへの想い（独立）
+            # 両極端に寄る分布（0か1に近い値が出やすい）
+            mode_menu.twofus_affinity_a = random.choice([random.uniform(0.0, 0.25), random.uniform(0.75, 1.0)])
+            mode_menu.twofus_affinity_b = random.choice([random.uniform(0.0, 0.25), random.uniform(0.75, 1.0)])
+
+            for ag in agents:
+                ag.twofus_start_z = ag.z
+                ag.twofus_start_yaw = ag.yaw
+                ag.twofus_start_pitch = ag.pitch
+                ag.twofus_start_color = vector(ag.current_color.x, ag.current_color.y, ag.current_color.z)
+                # 筒ごとの固有色（原色寄り、高彩度）
+                _hue = random.random()
+                _r, _g, _b = colorsys.hsv_to_rgb(_hue, random.uniform(0.85, 1.0), 1.0)
+                ag.twofus_own_color = vector(_r, _g, _b)
+
+            print(f"  Active pair: {[agents[i].node_id for i in pair]}")
+
+        # 他のモードの初期化フラグをリセット
+        if hasattr(mode_menu, 'global_prev_mode') and mode_menu.global_prev_mode != "The two of us":
+            mode_menu.fish_mode_initialized = False
+            mode_menu.shimmer_initialized = False
+            mode_menu.tenge_initialized = False
+            mode_menu.ceiling_mode_initialized = False
+            mode_menu.firefly_initialized = False
+            mode_menu.butterfly_initialized = False
+
+        # ============================================
+        # トランジション
+        # ============================================
+        transition_elapsed = sim_time - getattr(mode_menu, 'twofus_transition_start', sim_time)
+        transition_progress = min(1.0, transition_elapsed / getattr(mode_menu, 'twofus_transition_duration', 2.0))
+        if transition_progress < 0.5:
+            eased_progress = 4 * transition_progress ** 3
+        else:
+            eased_progress = 1 - pow(-2 * transition_progress + 2, 3) / 2
+        in_transition = transition_progress < 1.0
+
+        # ============================================
+        # ヘルパー: アクション選択
+        # ============================================
+        def twofus_pick_action():
+            actions = [
+                "face_each_other",   # 向き合う
+                "look_away",         # そっぽ向く
+                "look_audience",     # 観客の方を見る
+                "color_sync",        # 色を揃える
+            ]
+            return random.choice(actions)
+
+        def twofus_random_freq(affinity_a, affinity_b):
+            """片思い対応の点滅周波数。
+            各自の相性が高いほど相手に寄った周波数を選ぶ。"""
+            # 各自が好きな周波数帯を持つ
+            base_a = random.uniform(0.3, 4.0)
+            base_b = random.uniform(0.3, 4.0)
+            # 相手への想いが強いほど相手のベースに寄る
+            freq_a = base_a + (base_b - base_a) * affinity_a * 0.7
+            freq_b = base_b + (base_a - base_b) * affinity_b * 0.7
+            return max(0.2, freq_a), max(0.2, freq_b)
+
+        # ============================================
+        # ステートマシン
+        # ============================================
+        active = mode_menu.twofus_active
+        ag_a = agents[active[0]]
+        ag_b = agents[active[1]]
+
+        if not in_transition:
+            phase = mode_menu.twofus_phase
+
+            # --- descending: 2台が降りてくる ---
+            if phase == "descending":
+                arrived_a = ag_a.z <= twofus_target_z + 0.05
+                arrived_b = ag_b.z <= twofus_target_z + 0.05
+                if arrived_a and arrived_b:
+                    mode_menu.twofus_phase = "interacting"
+                    mode_menu.twofus_interaction_started = sim_time
+                    mode_menu.twofus_interaction_end = sim_time + random.uniform(
+                        twofus_interaction_dur_min, twofus_interaction_dur_max)
+                    # 各筒独立のアクション
+                    mode_menu.twofus_action_a = twofus_pick_action()
+                    mode_menu.twofus_action_b = twofus_pick_action()
+                    mode_menu.twofus_action_end_a = sim_time + random.uniform(
+                        twofus_action_dur_min, twofus_action_dur_max)
+                    mode_menu.twofus_action_end_b = sim_time + random.uniform(
+                        twofus_action_dur_min, twofus_action_dur_max)
+                    # 片思い: 各方向の相性（両極端に寄る）
+                    mode_menu.twofus_affinity_a = random.choice([random.uniform(0.0, 0.25), random.uniform(0.75, 1.0)])
+                    mode_menu.twofus_affinity_b = random.choice([random.uniform(0.0, 0.25), random.uniform(0.75, 1.0)])
+                    fa, fb = twofus_random_freq(mode_menu.twofus_affinity_a, mode_menu.twofus_affinity_b)
+                    mode_menu.twofus_blink_freq_a = fa
+                    mode_menu.twofus_blink_freq_b = fb
+                    print(f"[The two of us] 交信開始 "
+                          f"(A→B={mode_menu.twofus_affinity_a:.2f}, "
+                          f"B→A={mode_menu.twofus_affinity_b:.2f})")
+
+            # --- interacting: 交信中 ---
+            elif phase == "interacting":
+                # A のアクション切り替え（独立タイマー）
+                if sim_time >= mode_menu.twofus_action_end_a:
+                    mode_menu.twofus_action_a = twofus_pick_action()
+                    mode_menu.twofus_action_end_a = sim_time + random.uniform(
+                        twofus_action_dur_min, twofus_action_dur_max)
+                    # Aの点滅更新
+                    fa, _ = twofus_random_freq(mode_menu.twofus_affinity_a, mode_menu.twofus_affinity_b)
+                    mode_menu.twofus_blink_freq_a = fa
+                    print(f"[The two of us] A アクション: {mode_menu.twofus_action_a} "
+                          f"(点滅={fa:.1f}Hz)")
+
+                # B のアクション切り替え（独立タイマー）
+                if sim_time >= mode_menu.twofus_action_end_b:
+                    mode_menu.twofus_action_b = twofus_pick_action()
+                    mode_menu.twofus_action_end_b = sim_time + random.uniform(
+                        twofus_action_dur_min, twofus_action_dur_max)
+                    # Bの点滅更新
+                    _, fb = twofus_random_freq(mode_menu.twofus_affinity_a, mode_menu.twofus_affinity_b)
+                    mode_menu.twofus_blink_freq_b = fb
+                    print(f"[The two of us] B アクション: {mode_menu.twofus_action_b} "
+                          f"(点滅={fb:.1f}Hz)")
+
+                # 交信終了 → 別れの演出へ
+                if sim_time >= mode_menu.twofus_interaction_end:
+                    mode_menu.twofus_phase = "farewell"
+                    # 前からいた方(active[0])が帰る（farewell終了時に確定）
+                    # 別れの演出: まず見つめ合う
+                    mode_menu.twofus_farewell_phase = "gaze"
+                    mode_menu.twofus_farewell_start = sim_time
+                    # 別れ中はアクション固定
+                    mode_menu.twofus_action_a = "farewell"
+                    mode_menu.twofus_action_b = "farewell"
+                    print(f"[The two of us] 別れの演出開始（見つめ合い）")
+
+            # --- farewell: 別れのドラマ ---
+            elif phase == "farewell":
+                farewell_elapsed = sim_time - mode_menu.twofus_farewell_start
+                farewell_progress = farewell_elapsed / twofus_farewell_dur
+
+                if mode_menu.twofus_farewell_phase == "gaze":
+                    # 前半: じっと見つめ合う（点滅が遅くなっていく）
+                    if farewell_progress >= 0.5:
+                        mode_menu.twofus_farewell_phase = "turn_away"
+                        # 50%の確率でそっぽを向く or 見つめ続ける
+                        mode_menu.twofus_farewell_look_away = random.random() < 0.6
+                        print(f"[The two of us] 別れ後半: "
+                              f"{'そっぽ' if mode_menu.twofus_farewell_look_away else '見つめ続ける'}")
+                    # 点滅を徐々にゆっくりに
+                    slow_factor = max(0.2, 1.0 - farewell_progress)
+                    mode_menu.twofus_blink_freq_a = 1.0 * slow_factor
+                    mode_menu.twofus_blink_freq_b = 1.0 * slow_factor
+
+                if farewell_progress >= 1.0:
+                    # 別れ終了 → swapping へ
+                    mode_menu.twofus_phase = "swapping"
+                    # 固有色をブレンド後の色でアップデート（交流の痕跡）
+                    for ab_idx in [0, 1]:
+                        ab_ag = agents[active[ab_idx]]
+                        ab_partner = agents[active[1 - ab_idx]]
+                        ab_aff = mode_menu.twofus_affinity_a if ab_idx == 0 else mode_menu.twofus_affinity_b
+                        ab_blend = (ab_aff - 0.5) * 2.0 * 0.8
+                        new_c = ab_ag.twofus_own_color + \
+                            (ab_partner.twofus_own_color - ab_ag.twofus_own_color) * ab_blend
+                        ab_ag.twofus_own_color = vector(
+                            max(0.0, min(1.0, new_c.x)),
+                            max(0.0, min(1.0, new_c.y)),
+                            max(0.0, min(1.0, new_c.z)))
+                    # 常に前からいた方（active[0]）が帰る、新しく来た方（active[1]）が残る
+                    mode_menu.twofus_leaving = 0
+                    mode_menu.twofus_return_speed = random.uniform(
+                        twofus_return_speed_min, twofus_return_speed_max)
+                    # 次の相手を選ぶ
+                    candidates = [i for i in range(len(agents))
+                                  if i != active[0] and i != active[1]]
+                    mode_menu.twofus_swap_target = random.choice(candidates)
+                    mode_menu.twofus_farewell_phase = None
+                    print(f"[The two of us] 交代開始: "
+                          f"帰還={agents[active[mode_menu.twofus_leaving]].node_id} "
+                          f"(速度={mode_menu.twofus_return_speed:.1f}m/s), "
+                          f"新={agents[mode_menu.twofus_swap_target].node_id}")
+
+            # --- swapping: 1台帰還 + 1台新規降下 ---
+            elif phase == "swapping":
+                leaving_idx = active[mode_menu.twofus_leaving]
+                staying_idx = active[1 - mode_menu.twofus_leaving]
+                new_idx = mode_menu.twofus_swap_target
+                ag_leaving = agents[leaving_idx]
+                ag_new = agents[new_idx]
+
+                # 帰還完了 & 新規到着を判定
+                left_done = ag_leaving.z >= twofus_mob_z - 0.05
+                new_arrived = ag_new.z <= twofus_target_z + 0.05
+
+                if left_done and new_arrived:
+                    # ペア更新
+                    mode_menu.twofus_active = [staying_idx, new_idx]
+                    mode_menu.twofus_phase = "interacting"
+                    mode_menu.twofus_interaction_started = sim_time
+                    mode_menu.twofus_interaction_end = sim_time + random.uniform(
+                        twofus_interaction_dur_min, twofus_interaction_dur_max)
+                    mode_menu.twofus_action_a = twofus_pick_action()
+                    mode_menu.twofus_action_b = twofus_pick_action()
+                    mode_menu.twofus_action_end_a = sim_time + random.uniform(
+                        twofus_action_dur_min, twofus_action_dur_max)
+                    mode_menu.twofus_action_end_b = sim_time + random.uniform(
+                        twofus_action_dur_min, twofus_action_dur_max)
+                    # 固有色は各筒が持っているのでそのまま
+                    # 片思い: 新ペアの相性（両極端に寄る）
+                    mode_menu.twofus_affinity_a = random.choice([random.uniform(0.0, 0.25), random.uniform(0.75, 1.0)])
+                    mode_menu.twofus_affinity_b = random.choice([random.uniform(0.0, 0.25), random.uniform(0.75, 1.0)])
+                    fa, fb = twofus_random_freq(mode_menu.twofus_affinity_a, mode_menu.twofus_affinity_b)
+                    mode_menu.twofus_blink_freq_a = fa
+                    mode_menu.twofus_blink_freq_b = fb
+                    print(f"[The two of us] 新ペア交信開始: "
+                          f"{[agents[i].node_id for i in mode_menu.twofus_active]} "
+                          f"(A→B={mode_menu.twofus_affinity_a:.2f}, "
+                          f"B→A={mode_menu.twofus_affinity_b:.2f})")
+
+        # ============================================
+        # エージェント更新
+        # ============================================
+        active = mode_menu.twofus_active
+        phase = mode_menu.twofus_phase
+
+        # 別れ演出中かどうか
+        is_farewell = (phase == "farewell")
+        farewell_sub = getattr(mode_menu, 'twofus_farewell_phase', None)
+        farewell_look_away = getattr(mode_menu, 'twofus_farewell_look_away', False)
+
+        for idx, ag in enumerate(agents):
+            is_active_a = (idx == active[0])
+            is_active_b = (idx == active[1])
+            is_new = (phase == "swapping" and idx == mode_menu.twofus_swap_target)
+            is_leaving = (phase == "swapping" and idx == active[mode_menu.twofus_leaving])
+            is_the_one_leaving = (idx == active[mode_menu.twofus_leaving])
+
+            if in_transition:
+                # --- トランジション中: 元の位置からターゲットへイージング ---
+                if is_active_a or is_active_b:
+                    target_z = twofus_target_z
+                else:
+                    target_z = twofus_mob_z
+                ag.z = ag.twofus_start_z + (target_z - ag.twofus_start_z) * eased_progress
+                # 色フェード
+                if is_active_a or is_active_b:
+                    tc = ag.twofus_own_color
+                else:
+                    tc = vector(0, 0, 0)
+                ag.current_color = vector(
+                    ag.twofus_start_color.x + (tc.x - ag.twofus_start_color.x) * eased_progress,
+                    ag.twofus_start_color.y + (tc.y - ag.twofus_start_color.y) * eased_progress,
+                    ag.twofus_start_color.z + (tc.z - ag.twofus_start_color.z) * eased_progress)
+                ag.pitch += (0.0 - ag.pitch) * 0.1
+
+            elif is_leaving:
+                # --- 帰還中: 上昇 ---
+                ag.z = min(twofus_mob_z, ag.z + mode_menu.twofus_return_speed * dt)
+                # 上昇するにつれフェードアウト
+                fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
+                base_c = ag.twofus_own_color
+                ag.current_color = base_c * fade
+                # 帰還中もパートナーの方を見る（名残惜しさ）
+                partner_idx = active[1 - mode_menu.twofus_leaving]
+                partner = agents[partner_idx]
+                target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * 2.0 * dt
+                # ピッチ: パートナーを見下ろす/見上げる
+                dz = partner.z - ag.z
+                dist_h = math.hypot(partner.x - ag.x, partner.y - ag.y)
+                target_pitch = math.degrees(math.atan2(dz, max(0.1, dist_h)))
+                ag.pitch += (max(-60, min(60, target_pitch)) - ag.pitch) * 0.1
+
+            elif is_new:
+                # --- 新規: 降下中 ---
+                ag.z = max(twofus_target_z, ag.z - twofus_descend_speed * dt)
+                # 降下するにつれフェードイン
+                fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
+                ag.current_color = ag.twofus_own_color * fade
+                # 降下中、待っている相手の方を向く
+                staying_idx = active[1 - mode_menu.twofus_leaving]
+                partner = agents[staying_idx]
+                target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * 2.0 * dt
+                dz = partner.z - ag.z
+                dist_h = math.hypot(partner.x - ag.x, partner.y - ag.y)
+                target_pitch = math.degrees(math.atan2(dz, max(0.1, dist_h)))
+                ag.pitch += (max(-60, min(60, target_pitch)) - ag.pitch) * 0.1
+
+            elif is_active_a or is_active_b:
+                # --- アクティブ: 交信中 or 別れ中 ---
+
+                # パートナー情報
+                partner_idx = active[1] if is_active_a else active[0]
+                partner = agents[partner_idx]
+                dist_h = math.hypot(partner.x - ag.x, partner.y - ag.y)
+                dz = partner.z - ag.z
+
+                # この筒のアクション（各自独立）
+                my_action = mode_menu.twofus_action_a if is_active_a else mode_menu.twofus_action_b
+                # この筒の相性（相手への想い）
+                my_affinity = mode_menu.twofus_affinity_a if is_active_a else mode_menu.twofus_affinity_b
+                # 固有色と相手の色
+                my_color = ag.twofus_own_color
+                partner_color = agents[partner_idx].twofus_own_color
+                blink_freq = mode_menu.twofus_blink_freq_a if is_active_a else mode_menu.twofus_blink_freq_b
+
+                # --- 上下動: Perlinノイズ + 相性による上下関係 ---
+                bob_offset = mode_menu.twofus_bob_offset_a if is_active_a else mode_menu.twofus_bob_offset_b
+                bob_slow = pnoise2(sim_time * 0.15 + bob_offset, bob_offset * 0.7)
+                bob_fast = pnoise2(sim_time * 0.6 + bob_offset + 500, bob_offset * 0.3) * 0.3
+                bob_val = (bob_slow + bob_fast + 1.0) / 2.0
+                bob_val = max(0.0, min(1.0, bob_val))
+                # 相性差で上下の偏り: 相手への想いが強い方が下がる（見上げる）
+                partner_affinity = mode_menu.twofus_affinity_b if is_active_a else mode_menu.twofus_affinity_a
+                dominance = (my_affinity - partner_affinity)
+                bob_bias = -dominance * 0.15
+                bob_target_z = twofus_bob_min + (twofus_bob_max - twofus_bob_min) * bob_val + bob_bias
+                bob_target_z = max(twofus_bob_min - 0.1, min(twofus_bob_max + 0.1, bob_target_z))
+
+                if phase == "descending":
+                    ag.z = max(bob_target_z, ag.z - twofus_descend_speed * dt)
+                else:
+                    ag.z += (bob_target_z - ag.z) * 0.08
+
+                # --- 色: 時間をかけて相手の色に影響されていく ---
+                # 交信の進行度（0→1）
+                interaction_total = mode_menu.twofus_interaction_end - \
+                    getattr(mode_menu, 'twofus_interaction_started', mode_menu.twofus_interaction_end - 10.0)
+                if interaction_total > 0.1:
+                    color_progress = min(1.0, (sim_time - getattr(mode_menu, 'twofus_interaction_started', sim_time)) / interaction_total)
+                else:
+                    color_progress = 0.0
+                # 行ったり来たりの揺らぎ（Perlinノイズ）を乗せつつ全体的に進む
+                color_wobble = pnoise2(sim_time * 0.4 + bob_offset * 1.3, bob_offset * 0.5) * 0.3
+                color_t = max(0.0, min(1.0, color_progress + color_wobble * (1.0 - color_progress)))
+                # 最終ブレンド量 = affinity * 0.5、それに向かって color_t で進む
+                # affinity > 0.5 → 相手に寄る、< 0.5 → 相手と反対方向へ
+                blend_factor = (my_affinity - 0.5) * 2.0 * 0.8  # -0.8 〜 +0.8
+                blend_amount = color_t * blend_factor
+                blended_color = my_color + (partner_color - my_color) * blend_amount
+                # 反発で範囲外に出たら clamp
+                blended_color = vector(
+                    max(0.0, min(1.0, blended_color.x)),
+                    max(0.0, min(1.0, blended_color.y)),
+                    max(0.0, min(1.0, blended_color.z)))
+
+                # --- 向き制御（yaw & pitch） ---
+                if is_farewell:
+                    # 別れの演出
+                    if farewell_sub == "gaze":
+                        target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                    elif farewell_sub == "turn_away" and farewell_look_away:
+                        if is_the_one_leaving:
+                            target_yaw = math.degrees(math.atan2(ag.y - partner.y, ag.x - partner.x))
+                        else:
+                            target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                    else:
+                        target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                    dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                    ag.yaw += dyaw * 2.0 * dt
+                elif my_action == "face_each_other":
+                    target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                    dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                    ag.yaw += dyaw * 3.0 * dt
+                elif my_action == "look_away":
+                    away_yaw = math.degrees(math.atan2(ag.y - partner.y, ag.x - partner.x))
+                    dyaw = ((away_yaw - ag.yaw + 540) % 360) - 180
+                    ag.yaw += dyaw * 3.0 * dt
+                elif my_action == "look_audience":
+                    if audiences:
+                        closest = min(audiences, key=lambda p: math.hypot(p.x - ag.x, p.y - ag.y))
+                        target_yaw = math.degrees(math.atan2(closest.y - ag.y, closest.x - ag.x))
+                    else:
+                        if not hasattr(ag, 'twofus_random_yaw'):
+                            ag.twofus_random_yaw = random.uniform(0, 360)
+                        target_yaw = ag.twofus_random_yaw
+                    dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                    ag.yaw += dyaw * 3.0 * dt
+                elif my_action == "color_sync":
+                    # color_sync中は相手の方を向く
+                    target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                    dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                    ag.yaw += dyaw * 3.0 * dt
+
+                # --- ピッチ: パートナーの方を向く ---
+                target_pitch = math.degrees(math.atan2(dz, max(0.1, dist_h)))
+                ag.pitch += (max(-60, min(60, target_pitch)) - ag.pitch) * 0.08
+
+                # --- 点滅 ---
+                blink = (math.sin(sim_time * 2 * math.pi * blink_freq) + 1.0) / 2.0
+                ag.current_color = blended_color * (0.2 + 0.8 * blink)
+
+            else:
+                # --- モブ: 天井に待機、消灯 ---
+                ag.z += (twofus_mob_z - ag.z) * 0.1
+                ag.current_color = vector(0, 0, 0)
+                ag.pitch += (0.0 - ag.pitch) * 0.1
+
+            # z clamp
+            ag.z = max(minZ, min(maxZ, ag.z))
+
+            # モブのpitch以外はすでに上で設定済み
+            ag.autonomous_mode = False
+
+            # 3D描画更新
+            ax = ag.compute_axis() * agent_length
+            ctr = vector(ag.x, ag.y, ag.z)
+            ag.body.pos = ctr - ax / 2
+            ag.body.axis = ax
+            ag.cable.pos = ctr
+            ag.cable.axis = vector(0, 0, maxZ - ag.z)
+            u = ax.norm()
+            for ld3, ld2, t_offset in ag.leds:
+                ld3.pos = ctr + u * (agent_length * t_offset)
+                ld2.pos = vector(ag.x + u.x * agent_length * t_offset,
+                                 ag.y + u.y * agent_length * t_offset, 0)
+            ag.body.color = ag.current_color
+            for ld3, ld2, _ in ag.leds:
+                ld3.color = ld2.color = ag.current_color
+
+            # ダウンライト（オフ）
+            ag.downlight_brightness = 0.0
+            update_downlight_display(ag)
+
+        # ========================================================
+        # OSC送信（Max/MSPへ）
+        # ========================================================
+        # 各筒の高さと明滅を送信（高さ→音量、明滅→ビブラート）
+        for ag in agents:
+            # 高さを正規化: ceiling(2.8m)=0.0, target(2.0m)=1.0, それ以下も1.0
+            z_norm = max(0.0, min(1.0, (maxZ - ag.z) / (maxZ - twofus_target_z)))
+            # 明滅の明るさ（0〜1）
+            brightness = max(0.0, min(1.0, mag(ag.current_color)))
+            osc_client_max.send_message('/twofus/tube', [
+                int(ag.node_id),
+                float(z_norm),        # 音量（0=天井で無音, 1=下で最大）
+                float(brightness),    # 明滅値（ビブラート用）
+            ])
+
+        # フェーズ情報（0=descending, 1=interacting, 2=farewell, 3=swapping）
+        phase_map = {"descending": 0, "interacting": 1, "farewell": 2, "swapping": 3}
+        phase_int = phase_map.get(phase, 0)
+        osc_client_max.send_message('/twofus/phase', int(phase_int))
+
+        # アクティブペア情報
+        osc_client_max.send_message('/twofus/pair', [
+            int(agents[active[0]].node_id),
+            int(agents[active[1]].node_id),
+            float(mode_menu.twofus_affinity_a),
+            float(mode_menu.twofus_affinity_b),
+        ])
+
+        # 描画 & MQTT 送信
+        for ag in agents:
+            ag.display()
+            send_queue.put(ag)
+
     # メインループの既存のelif文の後に追加：
     elif mode_menu.selected == "マニュアルモード":
         # マニュアルモードの処理
@@ -5270,3 +5788,6 @@ while True:
         # 蝶を非表示にする
         if hasattr(mode_menu, 'butterfly') and mode_menu.butterfly:
             mode_menu.butterfly.set_visible(False)
+
+    if mode_menu.selected != "The two of us":
+        mode_menu.twofus_initialized = False
