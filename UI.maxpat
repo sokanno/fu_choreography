@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 239.0, 684.0, 405.0, 728.0 ],
+		"rect" : [ 239.0, 355.0, 405.0, 728.0 ],
 		"bglocked" : 0,
 		"openinpresentation" : 1,
 		"default_fontsize" : 12.0,
@@ -2398,8 +2398,8 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 213.0, 15.0, 1006.0, 22.0 ],
-					"text" : "clear, append マニュアルモード, append 魚群, append シマー, append 天上天下モード, append 回る天井, append 向き合う, append ホタル, append \"The two of us\", append 見えない蝶々"
+					"patching_rect" : [ 213.0, 15.0, 920.0, 22.0 ],
+					"text" : "clear, append マニュアルモード, append 魚群, append 天上天下モード, append 回る天井, append 向き合う, append ホタル, append \"The two of us\", append 見えない蝶々"
 				}
 
 			}
