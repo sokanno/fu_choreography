@@ -25,7 +25,7 @@ import queue
 
 #=========================================================
 # ここはどこか
-place = "berlin"  # "venue" or else
+place = "venue"  # "venue" or else
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -329,7 +329,7 @@ firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きい
 
 # 高さ動作パラメータ
 firefly_z_base = 2.3              # 基準高さ（範囲：約2.0m〜2.6m）
-firefly_z_amplitude = 0.3         # 高さの振幅
+firefly_z_amplitude = 0.15        # 高さの振幅（ハードウェア速度制約で控えめに）
 firefly_z_period = 8.0            # 高さ変動の周期[秒]
 firefly_z_noise_scale = 0.5       # 高さのノイズスケール
 
@@ -3328,7 +3328,7 @@ while True:
                 # 人との距離に基づいて振幅と中心高さを計算
                 min_amplitude = 0.3
                 max_amplitude = 0.4
-                avoid_radius = 2.5  # 逃げ始める半径
+                avoid_radius = 3.0  # 逃げ始める半径
                 # avoid_radius = 0.0  # 逃げ始める半径
 
 
@@ -3355,7 +3355,8 @@ while True:
                     # 既存の逃げ動作の計算（2.5m以内）
                     if dist < avoid_radius:
                         t = dist / avoid_radius
-                        smooth_t = t * t * (3.0 - 2.0 * t)
+                        # 急峻なイージング: 近づいた瞬間にガッと反応
+                        smooth_t = t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
                         person_factor = smooth_t
                         amplitude_factor = min(amplitude_factor, person_factor)
                         height_factor = min(height_factor, person_factor)
@@ -4792,17 +4793,20 @@ while True:
                 )
             
             # ========================================================
-            # 高さの計算
+            # 高さの計算（発光位相に連動・上方向のみ）
+            # phase=1.0で頂点（光る瞬間）、それ以外はベース付近
             # ========================================================
             if in_transition:
                 ag.z = ag.firefly_start_z + (firefly_z_base - ag.firefly_start_z) * eased_progress
             else:
-                z_wave = math.sin(ag.firefly_z_phase + sim_time * 2 * math.pi / firefly_z_period)
+                # 0〜1の範囲: phase=1.0/0.0で1（頂点）、phase=0.5で0（ベース）
+                z_lift = 0.5 + 0.5 * math.sin(ag.firefly_phase * 2 * math.pi - math.pi / 2)
+                # Perlinノイズで微妙な揺らぎ
                 z_noise = pnoise2(
                     ag.firefly_z_noise_offset + sim_time * firefly_z_noise_scale * 0.1,
                     ag.idx * 0.1
                 )
-                ag.z = firefly_z_base + z_wave * firefly_z_amplitude * 0.5 + z_noise * firefly_z_amplitude * 0.5
+                ag.z = firefly_z_base + z_lift * firefly_z_amplitude + z_noise * firefly_z_amplitude * 0.15
                 ag.z = max(minZ, min(maxZ, ag.z))
             
             # ========================================================

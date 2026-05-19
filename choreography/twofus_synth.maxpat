@@ -122,9 +122,10 @@
 							69,
 							1034,
 							197
-						]
+						],
+						"pattrstorage_flags": 2
 					},
-					"text": "pattrstorage",
+					"text": "pattrstorage @savemode 2 @autorestore 1",
 					"varname": "u230010924"
 				}
 			},
@@ -1000,7 +1001,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "F2 = 87.31 Hz  PWM L1.0 R0.0",
+									"text": "F2 = 87.31 Hz  PWM L0.419 R0.908",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -1250,7 +1251,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 1.0",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -1268,7 +1269,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.0",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -1663,7 +1664,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "G2 = 98.0 Hz  PWM L0.998 R0.056",
+									"text": "G2 = 98.0 Hz  PWM L0.619 R0.785",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -1913,7 +1914,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.998",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -1931,7 +1932,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.056",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -2326,7 +2327,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Ab2 = 103.83 Hz  PWM L0.994 R0.112",
+									"text": "Ab2 = 103.83 Hz  PWM L0.785 R0.619",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -2576,7 +2577,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.994",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -2594,7 +2595,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.112",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -2989,7 +2990,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Bb2 = 116.54 Hz  PWM L0.986 R0.168",
+									"text": "Bb2 = 116.54 Hz  PWM L0.908 R0.419",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -3239,7 +3240,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.986",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -3257,7 +3258,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.168",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -3652,7 +3653,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "C3 = 130.81 Hz  PWM L0.975 R0.223",
+									"text": "C3 = 130.81 Hz  PWM L0.309 R0.951",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -3902,7 +3903,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.975",
+									"text": "*~ 0.309",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -3920,7 +3921,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.223",
+									"text": "*~ 0.951",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -4315,7 +4316,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "D3 = 146.83 Hz  PWM L0.961 R0.277",
+									"text": "D3 = 146.83 Hz  PWM L0.522 R0.853",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -4565,7 +4566,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.961",
+									"text": "*~ 0.522",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -4583,7 +4584,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.277",
+									"text": "*~ 0.853",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -4978,7 +4979,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Eb3 = 155.56 Hz  PWM L0.944 R0.33",
+									"text": "Eb3 = 155.56 Hz  PWM L0.707 R0.707",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -5228,7 +5229,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.944",
+									"text": "*~ 0.707",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -5246,7 +5247,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.33",
+									"text": "*~ 0.707",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -5641,7 +5642,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "F3 = 174.61 Hz  PWM L0.924 R0.383",
+									"text": "F3 = 174.61 Hz  PWM L0.853 R0.522",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -5891,7 +5892,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.924",
+									"text": "*~ 0.853",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -5909,7 +5910,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.383",
+									"text": "*~ 0.522",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -6304,7 +6305,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "G3 = 196.0 Hz  PWM L0.901 R0.434",
+									"text": "G3 = 196.0 Hz  PWM L0.951 R0.309",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -6554,7 +6555,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.901",
+									"text": "*~ 0.951",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -6572,7 +6573,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.434",
+									"text": "*~ 0.309",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -6967,7 +6968,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Ab3 = 207.65 Hz  PWM L0.875 R0.484",
+									"text": "Ab3 = 207.65 Hz  PWM L0.419 R0.908",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -7217,7 +7218,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.875",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -7235,7 +7236,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.484",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -7630,7 +7631,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Bb3 = 233.08 Hz  PWM L0.847 R0.532",
+									"text": "Bb3 = 233.08 Hz  PWM L0.619 R0.785",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -7880,7 +7881,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.847",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -7898,7 +7899,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.532",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -8293,7 +8294,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "C4 = 261.63 Hz  PWM L0.816 R0.579",
+									"text": "C4 = 261.63 Hz  PWM L0.785 R0.619",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -8543,7 +8544,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.816",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -8561,7 +8562,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.579",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -8956,7 +8957,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "D4 = 293.66 Hz  PWM L0.782 R0.623",
+									"text": "D4 = 293.66 Hz  PWM L0.908 R0.419",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -9206,7 +9207,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.782",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -9224,7 +9225,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.623",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -9619,7 +9620,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Eb4 = 311.13 Hz  PWM L0.746 R0.666",
+									"text": "Eb4 = 311.13 Hz  PWM L0.309 R0.951",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -9869,7 +9870,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.746",
+									"text": "*~ 0.309",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -9887,7 +9888,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.666",
+									"text": "*~ 0.951",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -10282,7 +10283,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "F4 = 349.23 Hz  PWM L0.707 R0.707",
+									"text": "F4 = 349.23 Hz  PWM L0.522 R0.853",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -10532,7 +10533,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.707",
+									"text": "*~ 0.522",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -10550,7 +10551,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.707",
+									"text": "*~ 0.853",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -10945,7 +10946,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "G4 = 392.0 Hz  PWM L0.666 R0.746",
+									"text": "G4 = 392.0 Hz  PWM L0.707 R0.707",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -11195,7 +11196,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.666",
+									"text": "*~ 0.707",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -11213,7 +11214,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.746",
+									"text": "*~ 0.707",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -11608,7 +11609,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Ab4 = 415.3 Hz  PWM L0.623 R0.782",
+									"text": "Ab4 = 415.3 Hz  PWM L0.419 R0.908",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -11858,7 +11859,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.623",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -11876,7 +11877,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.782",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -12271,7 +12272,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Bb4 = 466.16 Hz  PWM L0.579 R0.816",
+									"text": "Bb4 = 466.16 Hz  PWM L0.619 R0.785",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -12521,7 +12522,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.579",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -12539,7 +12540,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.816",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -12934,7 +12935,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "C5 = 523.25 Hz  PWM L0.532 R0.847",
+									"text": "C5 = 523.25 Hz  PWM L0.785 R0.619",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -13184,7 +13185,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.532",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -13202,7 +13203,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.847",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -13597,7 +13598,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "D5 = 587.33 Hz  PWM L0.484 R0.875",
+									"text": "D5 = 587.33 Hz  PWM L0.908 R0.419",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -13847,7 +13848,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.484",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -13865,7 +13866,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.875",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -14260,7 +14261,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Eb5 = 622.25 Hz  PWM L0.434 R0.901",
+									"text": "Eb5 = 622.25 Hz  PWM L0.309 R0.951",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -14510,7 +14511,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.434",
+									"text": "*~ 0.309",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -14528,7 +14529,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.901",
+									"text": "*~ 0.951",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -14923,7 +14924,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "F5 = 698.46 Hz  PWM L0.383 R0.924",
+									"text": "F5 = 698.46 Hz  PWM L0.522 R0.853",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -15173,7 +15174,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.383",
+									"text": "*~ 0.522",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -15191,7 +15192,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.924",
+									"text": "*~ 0.853",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -15586,7 +15587,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "G5 = 783.99 Hz  PWM L0.33 R0.944",
+									"text": "G5 = 783.99 Hz  PWM L0.707 R0.707",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -15836,7 +15837,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.33",
+									"text": "*~ 0.707",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -15854,7 +15855,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.944",
+									"text": "*~ 0.707",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -16249,7 +16250,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Ab5 = 830.61 Hz  PWM L0.277 R0.961",
+									"text": "Ab5 = 830.61 Hz  PWM L0.853 R0.522",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -16499,7 +16500,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.277",
+									"text": "*~ 0.853",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -16517,7 +16518,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.961",
+									"text": "*~ 0.522",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -16912,7 +16913,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Bb5 = 932.33 Hz  PWM L0.223 R0.975",
+									"text": "Bb5 = 932.33 Hz  PWM L0.951 R0.309",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -17162,7 +17163,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.223",
+									"text": "*~ 0.951",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -17180,7 +17181,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.975",
+									"text": "*~ 0.309",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -17575,7 +17576,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "C6 = 1046.5 Hz  PWM L0.168 R0.986",
+									"text": "C6 = 1046.5 Hz  PWM L0.419 R0.908",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -17825,7 +17826,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.168",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -17843,7 +17844,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.986",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -18238,7 +18239,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "D6 = 1174.66 Hz  PWM L0.112 R0.994",
+									"text": "D6 = 1174.66 Hz  PWM L0.619 R0.785",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -18488,7 +18489,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.112",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -18506,7 +18507,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.994",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -18901,7 +18902,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "Eb6 = 1244.51 Hz  PWM L0.056 R0.998",
+									"text": "Eb6 = 1244.51 Hz  PWM L0.785 R0.619",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -19151,7 +19152,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.056",
+									"text": "*~ 0.785",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -19169,7 +19170,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 0.998",
+									"text": "*~ 0.619",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -19564,7 +19565,7 @@
 								"box": {
 									"id": "obj-comment",
 									"maxclass": "comment",
-									"text": "F6 = 1396.91 Hz  PWM L0.0 R1.0",
+									"text": "F6 = 1396.91 Hz  PWM L0.908 R0.419",
 									"numinlets": 1,
 									"numoutlets": 0,
 									"fontsize": 12,
@@ -19814,7 +19815,7 @@
 								"box": {
 									"id": "obj-pan-l",
 									"maxclass": "newobj",
-									"text": "*~ 0.0",
+									"text": "*~ 0.908",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -19832,7 +19833,7 @@
 								"box": {
 									"id": "obj-pan-r",
 									"maxclass": "newobj",
-									"text": "*~ 1.0",
+									"text": "*~ 0.419",
 									"numinlets": 2,
 									"numoutlets": 1,
 									"outlettype": [
@@ -21200,6 +21201,63 @@
 						20
 					],
 					"text": "R"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-loadmess-gain-l",
+					"maxclass": "newobj",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [
+						""
+					],
+					"patching_rect": [
+						30,
+						405,
+						85,
+						22
+					],
+					"text": "loadmess 120"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-loadmess-gain-r",
+					"maxclass": "newobj",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [
+						""
+					],
+					"patching_rect": [
+						70,
+						405,
+						85,
+						22
+					],
+					"text": "loadmess 120"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-autopattr",
+					"maxclass": "newobj",
+					"numinlets": 1,
+					"numoutlets": 4,
+					"outlettype": [
+						"",
+						"",
+						"",
+						""
+					],
+					"patching_rect": [
+						810,
+						120,
+						145,
+						22
+					],
+					"text": "autopattr @autoname 1"
 				}
 			}
 		],
@@ -23371,6 +23429,30 @@
 					"destination": [
 						"obj-4",
 						1
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-loadmess-gain-l",
+						0
+					],
+					"destination": [
+						"obj-gain",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-loadmess-gain-r",
+						0
+					],
+					"destination": [
+						"obj-gain-r",
+						0
 					]
 				}
 			}

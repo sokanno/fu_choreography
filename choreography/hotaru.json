@@ -1,0 +1,28 @@
+{
+	"pattrstorage" : 	{
+		"name" : "hotaru",
+		"slots" : 		{
+			"1" : 			{
+				"id" : 1,
+				"data" : 				{
+					"bp.Reverb 2::Damping" : [ 206.312171124779979 ],
+					"bp.Reverb 2::Decay" : [ 45.0 ],
+					"bp.Reverb 2::Diffusion" : [ 0.672440944881889 ],
+					"bp.Reverb 2::Mix" : [ 80.708661417322787 ],
+					"bp.Reverb 2::Size" : [ 80.905511811023558 ],
+					"bp.Reverb 2::bypass" : [ 0.0 ],
+					"bp.Reverb 2[1]::Damping" : [ 8314.811814579818019 ],
+					"bp.Reverb 2[1]::Decay" : [ 62.322834645669268 ],
+					"bp.Reverb 2[1]::Diffusion" : [ 0.727559055118109 ],
+					"bp.Reverb 2[1]::Mix" : [ 87.795275590551142 ],
+					"bp.Reverb 2[1]::Size" : [ 79.330708661417276 ],
+					"bp.Reverb 2[1]::bypass" : [ 0.0 ]
+				}
+
+			}
+
+		}
+
+	}
+
+}
