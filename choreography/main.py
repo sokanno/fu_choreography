@@ -359,8 +359,11 @@ heartbeat_timeout = 30.0  # 秒: この間heartbeatが来なければ「死」�
 _heartbeat_lock = threading.Lock()
 _heartbeat_last_seen = {}   # {node_id: last_time}
 
+_heartbeat_rx_count = 0
+
 def _on_mqtt_message(client, userdata, msg):
     """fu/device/+/heartbeat を受信してノード生存状態を更新"""
+    global _heartbeat_rx_count
     if msg.topic.startswith("fu/device/") and msg.topic.endswith("/heartbeat"):
         try:
             payload = json.loads(msg.payload)
@@ -368,8 +371,11 @@ def _on_mqtt_message(client, userdata, msg):
             if nid >= 0:
                 with _heartbeat_lock:
                     _heartbeat_last_seen[nid] = time.time()
-        except Exception:
-            pass
+                _heartbeat_rx_count += 1
+                if _heartbeat_rx_count <= 3:
+                    print(f"[Heartbeat] node {nid} received (#{_heartbeat_rx_count})")
+        except Exception as e:
+            print(f"[Heartbeat] ERROR parsing: {e}")
 
 def get_alive_node_ids():
     """heartbeat_timeout 以内にheartbeatが来たノードIDのセットを返す"""
