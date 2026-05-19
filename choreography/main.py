@@ -317,6 +317,10 @@ firefly_fov_angle = 120.0          # 視野角[度]（前方90°に変更）
 
 # 群れと個の分離パラメータ
 firefly_isolation_threshold = 3.5  # これ以上離れると孤立とみなす[m]
+
+# 音の遅延キュー（光→音のタイミングずらし）
+firefly_sound_delay = 0.2  # 秒
+_firefly_sound_queue = []  # [(send_time, osc_args), ...]
 firefly_isolation_drift = 0.02     # 孤立時の位相ドリフト速度
 
 # ★ 向き制御パラメータ（新規）
@@ -4542,6 +4546,7 @@ while True:
         if not hasattr(mode_menu, 'firefly_initialized') or not mode_menu.firefly_initialized:
             print(f"[ホタルモード] 初期化開始")
             mode_menu.firefly_initialized = True
+            _firefly_sound_queue.clear()
             mode_menu.firefly_transition_start = sim_time
             mode_menu.firefly_transition_duration = 2.0
             
@@ -4687,6 +4692,13 @@ while True:
                     ag.firefly_isolation = min(1.0, min_dist / firefly_isolation_threshold)
         
         # ========================================================
+        # 遅延キューから音のOSC送信
+        # ========================================================
+        while _firefly_sound_queue and _firefly_sound_queue[0][0] <= sim_time:
+            _, osc_args = _firefly_sound_queue.pop(0)
+            osc_client_max.send_message('/firefly_flash', osc_args)
+
+        # ========================================================
         # 各エージェントの更新
         # ========================================================
         for ag in agents:
@@ -4801,18 +4813,18 @@ while True:
                 ag.firefly_phase += phase_increment
                 if ag.firefly_phase >= 1.0:
                     ag.firefly_phase -= 1.0
-                    ag.firefly_flashing = True
-                    ag.firefly_flash_start = sim_time
-                    ag.firefly_last_flash = sim_time
-                    
-                    # ★ OSCで発光開始を通知
-                    osc_client_max.send_message('/firefly_flash', [
-                        int(ag.node_id),
-                        float(ag.x),
-                        float(ag.y),
-                        float(ag.z),
-                        float(ag.firefly_isolation)  # 0.0=群れの中、1.0=孤立
-                    ])
+                    # デッドノードは光らない・鳴らない
+                    if is_node_alive(ag.node_id):
+                        ag.firefly_flashing = True
+                        ag.firefly_flash_start = sim_time
+                        ag.firefly_last_flash = sim_time
+
+                        # ★ OSC送信を遅延キューに積む（光より200ms遅れて音）
+                        _firefly_sound_queue.append((
+                            sim_time + firefly_sound_delay,
+                            [int(ag.node_id), float(ag.x), float(ag.y),
+                             float(ag.z), float(ag.firefly_isolation)]
+                        ))
                                      
                 elif ag.firefly_phase < 0.0:
                     ag.firefly_phase += 1.0

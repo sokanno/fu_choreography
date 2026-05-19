@@ -1143,7 +1143,7 @@
 						101.0,
 						22.0
 					],
-					"text": "scale -3. 3. 127 0"
+					"text": "scale -2.7 2.7 126 1"
 				}
 			},
 			{
@@ -1856,18 +1856,6 @@
 			{
 				"patchline": {
 					"destination": [
-						"obj-4",
-						0
-					],
-					"source": [
-						"obj-37",
-						0
-					]
-				}
-			},
-			{
-				"patchline": {
-					"destination": [
 						"obj-8",
 						0
 					],
@@ -2233,6 +2221,18 @@
 					],
 					"source": [
 						"obj-111",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-37",
+						0
+					],
+					"destination": [
+						"obj-4",
 						0
 					]
 				}
