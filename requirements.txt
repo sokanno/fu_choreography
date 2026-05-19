@@ -1,0 +1,4 @@
+vpython>=7.6.5
+paho-mqtt>=2.1.0
+python-osc>=1.9.3
+noise>=1.2.2
