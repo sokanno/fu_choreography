@@ -572,7 +572,7 @@ class Agent:
         self.target_downlight = 0.0      # イージング用の目標値
 
         # 自律制御モード用
-        self.autonomous_mode = True  # 自律制御中かどうか
+        self.autonomous_mode = False  # 自律制御は無効化
         self.actual_pitch = self.pitch  # 実際の表示用pitch
 
         # 筒の端の表示用リング（赤い輪）
@@ -1643,41 +1643,30 @@ def send_robot_data(agent):
     - node_id: int
     - z, pitch, yaw: float
     - current_color.x/y/z: 0.0–1.0
-    - autonomous_mode: bool (追加)
-    - actual_pitch: float (追加)
     """
     # ---- MQTT 出力 ----
     # 位置・向き
     z_m = max(minZ, min(maxZ, agent.z))
     yaw_deg = (agent.yaw % 360.0 + 360.0) % 360.0  # 0–360
-    
-    # Pitch: 自律モードなら90度を送信、そうでなければ実際の値
-    if agent.autonomous_mode:
-        pitch_deg = 90.0  # 自律制御の信号
-    else:
-        pitch_deg = max(-60.0, min(60.0, agent.pitch))
-    
+    pitch_deg = max(-60.0, min(60.0, agent.pitch))
+
     mm = int(z_m * 1000 + 0.5)  # 0–2800 → uint16_t
-    pitchC = int(pitch_deg * 100 + 0.5)  # -6000〜+6000 or 9000 → int16_t
+    pitchC = int(pitch_deg * 100 + 0.5)  # -6000〜+6000 → int16_t
     yawC = int(yaw_deg * 100 + 0.5)  # 0–35999 → uint16_t
-    
+
     # パック (6 B)
     payload_pos = struct.pack("<HhH", mm, pitchC, yawC)
     mqtt_client.publish(f"ps/{agent.node_id}", payload_pos)
-    
+
     # 色は従来どおり
     r = int(agent.current_color.x * 255)
     g = int(agent.current_color.y * 255)
     b = int(agent.current_color.z * 255)
     mqtt_client.publish(f"cl/{agent.node_id}", bytes([r, g, b]))
-    
+
     # ダウンライト
     dl = int(agent.downlight_brightness * 255)
     mqtt_client.publish(f"dl/{agent.node_id}", bytes([dl]))
-
-    # 自律モードフラグ（新規追加）
-    at = 1 if agent.autonomous_mode else 0
-    mqtt_client.publish(f"at/{agent.node_id}", bytes([at]))
 
 
 # def send_robot_data(agent):
@@ -2335,13 +2324,6 @@ while True:
                 target_pitch = degrees(atan2(dz, hypot(dx, dy)))
                 target_pitch = max(-60, min(60, target_pitch))  # クランプ
 
-                # 自律モードチェック
-                yaw_diff = abs(((target_yaw - ag.yaw + 540) % 360) - 180)
-                if md < 1.5 and yaw_diff < 30:  # 1.5m以内かつ±30度以内
-                    ag.autonomous_mode = True
-                else:
-                    ag.autonomous_mode = False
-
                 # 観客がいる場合は従来通りイージングで追従
                 if in_transition:
                     k = min(1.0, ease_speed * dt * eased_progress)
@@ -2354,7 +2336,6 @@ while True:
                 ag.yaw += dyaw * k
             else:
                 # 観客がいない場合：自転ステップ回転
-                ag.autonomous_mode = False
 
                 # pitchはuphill方向に追従（従来通り）
                 g_dot_n = -normal.z
@@ -2393,10 +2374,7 @@ while True:
             # actual_pitchを更新（自律モード用の表示値）
             ag.actual_pitch = ag.pitch
 
-            # (E) 自律モードのビジュアル更新
-            # トランジション中は自律モードの表示を抑制
-            if in_transition:
-                ag.autonomous_mode = False
+            ag.autonomous_mode = False
             ag.update_autonomous_indicator()
 
             # (F) ジオメトリ更新
@@ -3114,9 +3092,7 @@ while True:
                     tgt_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
                     tgt_pitch = max(-60, min(60, tgt_pitch))
                     
-                    # Group Aは常に自律モード（トランジション完了後）
-                    # ag.autonomous_mode = True if not in_transition else False
-                    ag.autonomous_mode = False if not in_transition else False
+                    ag.autonomous_mode = False
                 else:
                     ag.autonomous_mode = False
                     tgt_yaw, tgt_pitch = ag.yaw, ag.pitch
@@ -3144,15 +3120,7 @@ while True:
                     tgt_pitch = math.degrees(math.atan2(dz2, math.hypot(dx2, dy2)))
                     tgt_pitch = max(-60, min(60, tgt_pitch))
                     
-                    # 自律モードチェック（トランジション完了後）
-                    if not in_transition:
-                        yaw_diff = abs(((tgt_yaw - ag.yaw + 540) % 360) - 180)
-                        if md < 1.5 and yaw_diff < 30:
-                            ag.autonomous_mode = True
-                        else:
-                            ag.autonomous_mode = False
-                    else:
-                        ag.autonomous_mode = False
+                    ag.autonomous_mode = False
                 else:
                     ag.autonomous_mode = False
                     tgt_yaw, tgt_pitch = base_yaw, base_pitch
@@ -3441,38 +3409,8 @@ while True:
                         amplitude_factor = min(amplitude_factor, person_factor)
                         height_factor = min(height_factor, person_factor)
 
-                # ★魚群モード専用の自律モード判定（既存の逃げ動作とは独立）
-                if closest_person:
-                    if 1.5 < closest_dist <= 4.0:  # 1.5mより遠く、4.0m以内
-                        # 観客の方向を計算
-                        dx = closest_person.x - ag.x
-                        dy = closest_person.y - ag.y
-                        dz = closest_person.height - ag.z
-                        target_yaw = math.degrees(math.atan2(dy, dx))
-                        
-                        # 現在の向きと目標方向の差
-                        yaw_diff = abs(((target_yaw - ag.yaw + 540) % 360) - 180)
-                        
-                        # 正面を向いている場合（±30度以内）のみ自律モードON
-                        if yaw_diff < 30:
-                            ag.autonomous_mode = True
-                            # Pitchも計算
-                            horiz_dist = math.hypot(dx, dy)
-                            target_pitch = math.degrees(math.atan2(dz, horiz_dist))
-                            ag.target_pitch = max(-60, min(60, target_pitch))
-                        else:
-                            ag.autonomous_mode = False
-                            ag.target_pitch = None
-                    else:
-                        # 1.5m以内または4.0m以上は自律モードOFF
-                        ag.autonomous_mode = False
-                        ag.target_pitch = None
-                else:
-                    # 観客がいない場合
-                    ag.autonomous_mode = False
-                    ag.target_pitch = None
-
-                # ★自律モードのビジュアル更新（他のモードと同じ）
+                # 魚群モードでは自律モードを使わない
+                ag.autonomous_mode = False
                 ag.update_autonomous_indicator()
 
                 # 最終的な振幅を計算（既存のロジックそのまま）
@@ -3962,18 +3900,8 @@ while True:
                 target_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
                 target_pitch = max(-60, min(60, target_pitch))
                 
-                # 自律モードの判定
-                yaw_diff = abs(((target_yaw - ag.actual_face_dir + 540) % 360) - 180)
-                if ag.drop_mode == "rare":
-                    # レアドロップ時は常に自律モード
-                    ag.autonomous_mode = True
-                elif min_dist < 1.5 and yaw_diff < 30:
-                    # 通常時は1.5m以内かつ正面向きで自律モード
-                    ag.autonomous_mode = True
-                else:
-                    ag.autonomous_mode = False
+                ag.autonomous_mode = False
             else:
-                # 観客がいない場合
                 ag.autonomous_mode = False
                 target_yaw = ag.actual_face_dir
                 target_pitch = 0
@@ -4525,8 +4453,7 @@ while True:
 
         # 表示更新
         for ag in agents:
-            ag.autonomous_mode = True
-            ag.pitch = 90.0  # ★補間なしで90度を送信するため、内部値も90度に設定
+            ag.autonomous_mode = False
             # ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
             ag.z = random.uniform(1.8, 1.95)  # 高さをランダムに設定
             ag.current_color.x = random.uniform(0.8, 0.83)
@@ -4936,8 +4863,7 @@ while True:
                 ag.yaw += dyaw * 0.1
                 ag.pitch += (target_pitch - ag.pitch) * 0.1
                 
-                yaw_diff = abs(((target_yaw - ag.yaw + 540) % 360) - 180)
-                ag.autonomous_mode = (min_dist < 1.5 and yaw_diff < 30)
+                ag.autonomous_mode = False
             else:
                 ag.autonomous_mode = False
             
