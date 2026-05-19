@@ -1648,10 +1648,14 @@ def send_robot_data(agent):
     # 位置・向き
     z_m = max(minZ, min(maxZ, agent.z))
     yaw_deg = (agent.yaw % 360.0 + 360.0) % 360.0  # 0–360
-    pitch_deg = max(-60.0, min(60.0, agent.pitch))
+    # Pitch: 向き合うモード（autonomous_mode=True）なら90度を送信
+    if agent.autonomous_mode:
+        pitch_deg = 90.0
+    else:
+        pitch_deg = max(-60.0, min(60.0, agent.pitch))
 
     mm = int(z_m * 1000 + 0.5)  # 0–2800 → uint16_t
-    pitchC = int(pitch_deg * 100 + 0.5)  # -6000〜+6000 → int16_t
+    pitchC = int(pitch_deg * 100 + 0.5)  # -6000〜+6000 or 9000 → int16_t
     yawC = int(yaw_deg * 100 + 0.5)  # 0–35999 → uint16_t
 
     # パック (6 B)
@@ -1667,6 +1671,10 @@ def send_robot_data(agent):
     # ダウンライト
     dl = int(agent.downlight_brightness * 255)
     mqtt_client.publish(f"dl/{agent.node_id}", bytes([dl]))
+
+    # 自律モードフラグ（向き合うモード用）
+    at = 1 if agent.autonomous_mode else 0
+    mqtt_client.publish(f"at/{agent.node_id}", bytes([at]))
 
 
 # def send_robot_data(agent):
@@ -4453,7 +4461,8 @@ while True:
 
         # 表示更新
         for ag in agents:
-            ag.autonomous_mode = False
+            ag.autonomous_mode = True
+            ag.pitch = 90.0  # 自律制御の信号
             # ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
             ag.z = random.uniform(1.8, 1.95)  # 高さをランダムに設定
             ag.current_color.x = random.uniform(0.8, 0.83)
