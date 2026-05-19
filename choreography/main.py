@@ -319,7 +319,7 @@ firefly_fov_angle = 120.0          # 視野角[度]（前方90°に変更）
 firefly_isolation_threshold = 3.5  # これ以上離れると孤立とみなす[m]
 
 # 音の遅延キュー（光→音のタイミングずらし）
-firefly_sound_delay = 0.2  # 秒
+firefly_sound_delay = 0.1  # 秒
 _firefly_sound_queue = []  # [(send_time, osc_args), ...]
 firefly_isolation_drift = 0.02     # 孤立時の位相ドリフト速度
 
