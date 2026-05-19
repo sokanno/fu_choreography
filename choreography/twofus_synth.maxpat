@@ -37119,6 +37119,186 @@
 					],
 					"text": "R"
 				}
+			},
+			{
+				"box": {
+					"id": "obj-noise-vol",
+					"maxclass": "newobj",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [
+						"signal"
+					],
+					"patching_rect": [
+						662.0,
+						530.0,
+						30.0,
+						22.0
+					],
+					"text": "*~"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-lfo-scale-freq",
+					"maxclass": "newobj",
+					"numinlets": 6,
+					"numoutlets": 1,
+					"outlettype": [
+						""
+					],
+					"patching_rect": [
+						1073.0,
+						750.0,
+						150.0,
+						22.0
+					],
+					"text": "scale -1. 1. 200. 2500."
+				}
+			},
+			{
+				"box": {
+					"id": "obj-lfo-scale-gain",
+					"maxclass": "newobj",
+					"numinlets": 6,
+					"numoutlets": 1,
+					"outlettype": [
+						""
+					],
+					"patching_rect": [
+						776.0,
+						750.0,
+						140.0,
+						22.0
+					],
+					"text": "scale -1. 1. 0.14 0.6"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-lfo-scale-q",
+					"maxclass": "newobj",
+					"numinlets": 6,
+					"numoutlets": 1,
+					"outlettype": [
+						""
+					],
+					"patching_rect": [
+						931.0,
+						750.0,
+						130.0,
+						22.0
+					],
+					"text": "scale -1. 1. 0.8 2.4"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-lfo-metro",
+					"maxclass": "newobj",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [
+						"bang"
+					],
+					"patching_rect": [
+						850.0,
+						680.0,
+						55.0,
+						22.0
+					],
+					"text": "metro 50"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-lfo-toggle",
+					"maxclass": "newobj",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [
+						"bang"
+					],
+					"patching_rect": [
+						850.0,
+						655.0,
+						58.0,
+						22.0
+					],
+					"text": "loadbang"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-lfo-start",
+					"maxclass": "message",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [
+						""
+					],
+					"patching_rect": [
+						915.0,
+						655.0,
+						29.5,
+						22.0
+					],
+					"text": "1"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-snap-freq",
+					"maxclass": "newobj",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [
+						"float"
+					],
+					"patching_rect": [
+						1073.0,
+						735.0,
+						65.0,
+						22.0
+					],
+					"text": "snapshot~"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-snap-gain",
+					"maxclass": "newobj",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [
+						"float"
+					],
+					"patching_rect": [
+						776.0,
+						735.0,
+						65.0,
+						22.0
+					],
+					"text": "snapshot~"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-snap-q",
+					"maxclass": "newobj",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [
+						"float"
+					],
+					"patching_rect": [
+						931.0,
+						735.0,
+						65.0,
+						22.0
+					],
+					"text": "snapshot~"
+				}
 			}
 		],
 		"lines": [
@@ -39702,6 +39882,210 @@
 					],
 					"destination": [
 						"obj-gain-l",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-77",
+						0
+					],
+					"destination": [
+						"obj-noise-vol",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-25",
+						0
+					],
+					"destination": [
+						"obj-noise-vol",
+						1
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-noise-vol",
+						0
+					],
+					"destination": [
+						"obj-50",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-scale-freq",
+						0
+					],
+					"destination": [
+						"obj-78",
+						5
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-scale-gain",
+						0
+					],
+					"destination": [
+						"obj-78",
+						6
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-scale-q",
+						0
+					],
+					"destination": [
+						"obj-78",
+						7
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-toggle",
+						0
+					],
+					"destination": [
+						"obj-lfo-start",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-start",
+						0
+					],
+					"destination": [
+						"obj-lfo-metro",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-metro",
+						0
+					],
+					"destination": [
+						"obj-snap-freq",
+						1
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-metro",
+						0
+					],
+					"destination": [
+						"obj-snap-gain",
+						1
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-lfo-metro",
+						0
+					],
+					"destination": [
+						"obj-snap-q",
+						1
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-94",
+						0
+					],
+					"destination": [
+						"obj-snap-freq",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-56",
+						0
+					],
+					"destination": [
+						"obj-snap-gain",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-57",
+						0
+					],
+					"destination": [
+						"obj-snap-q",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-snap-freq",
+						0
+					],
+					"destination": [
+						"obj-lfo-scale-freq",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-snap-gain",
+						0
+					],
+					"destination": [
+						"obj-lfo-scale-gain",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-snap-q",
+						0
+					],
+					"destination": [
+						"obj-lfo-scale-q",
 						0
 					]
 				}

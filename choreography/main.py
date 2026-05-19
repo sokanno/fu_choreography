@@ -7,7 +7,7 @@ from vpython import *
 scene.visible = False
 scene.width = scene.height = 0
 
-import math, random, struct, csv
+import math, random, struct, csv, time, json
 from noise import pnoise2, pnoise1
 import paho.mqtt.client as mqtt
 
@@ -348,13 +348,50 @@ detect_radius_firefly = 0.0
 # MQTT セットアップ
 # ========================================================
 mqtt_client = mqtt.Client()
+
+# ── Heartbeat 監視（通信不良検出）──
+import threading
+heartbeat_timeout = 30.0  # 秒: この間heartbeatが来なければ「死」と判定
+_heartbeat_lock = threading.Lock()
+_heartbeat_last_seen = {}   # {node_id: last_time}
+
+def _on_mqtt_message(client, userdata, msg):
+    """fu/device/+/heartbeat を受信してノード生存状態を更新"""
+    if msg.topic.startswith("fu/device/") and msg.topic.endswith("/heartbeat"):
+        try:
+            payload = json.loads(msg.payload)
+            nid = int(payload.get("id", -1))
+            if nid >= 0:
+                with _heartbeat_lock:
+                    _heartbeat_last_seen[nid] = time.time()
+        except Exception:
+            pass
+
+def get_alive_node_ids():
+    """heartbeat_timeout 以内にheartbeatが来たノードIDのセットを返す"""
+    now = time.time()
+    with _heartbeat_lock:
+        return {nid for nid, t in _heartbeat_last_seen.items()
+                if now - t < heartbeat_timeout}
+
+def is_node_alive(node_id):
+    """特定ノードが生存しているか"""
+    alive = get_alive_node_ids()
+    if not alive:
+        return True  # heartbeatが1つも来ていない場合は全員生存扱い（テスト環境用）
+    return node_id in alive
+
+mqtt_client.on_message = _on_mqtt_message
+
 if place == "venue":
     mqtt_client.connect("192.168.1.2", 1883, 60)
 else:
     mqtt_client.connect("127.0.0.1", 1883, 60)
     # mqtt_client.connect("10.0.1.218", 1883, 60)
 
+mqtt_client.subscribe("fu/device/+/heartbeat", 0)
 mqtt_client.loop_start()
+print(f"[Heartbeat] fu/device/+/heartbeat を監視開始 (timeout={heartbeat_timeout}s)")
 
 # ========================================================
 # 3Dビュー（左上）
@@ -564,6 +601,18 @@ class Agent:
             color=vector(1, 1, 0.8),   # 暖色系の光
             opacity=0.0,               # 初期は透明
             emissive=True              # 発光
+        )
+
+        # デッドノード表示用リング（2Dビュー、赤い×印）
+        self.dead_marker_2d = ring(
+            canvas=scene2d,
+            pos=vector(self.x, self.y, 0.3),  # LED より上
+            axis=vector(0, 0, 1),
+            radius=agent_radius * 2.0,
+            thickness=agent_radius * 0.35,
+            color=vector(1, 0.15, 0.15),
+            emissive=True,
+            visible=False
         )
 
         # 3D body + cable
@@ -1943,7 +1992,11 @@ else:
 
 sim_time = noise_time = angle = 0.0
 dt = 1/20
-current_groupA_idx = random.randrange(len(agents))
+# 生存ノードから初期Group Aを選択（起動直後はheartbeat未着のためfallback）
+_alive_init = [i for i, ag in enumerate(agents) if is_node_alive(ag.node_id)]
+if not _alive_init:
+    _alive_init = list(range(len(agents)))
+current_groupA_idx = random.choice(_alive_init)
 prev_z_diff       = None
 epsilon           = 0.05   # 高さ差トリガーの許容幅
 # ─── イージング速度 ───────────────────────────────
@@ -2670,6 +2723,7 @@ while True:
         if not hasattr(mode_menu, "groupa_color"):
             h_rand = random.random()
             mode_menu.groupa_color = vector(*colorsys.hsv_to_rgb(h_rand, 1.0, 1.0))
+            mode_menu.groupa_prev_hue = h_rand  # 前回色相を記録
         # ---------------------------------------
 
         # ========================================================
@@ -2689,9 +2743,9 @@ while True:
             
             # ★Group B明度管理用の初期化
             mode_menu.groupb_brightness_start_time = sim_time
-            mode_menu.groupb_brightness = 0.5  # 初期明度50%から開始
+            mode_menu.groupb_brightness = 0.65  # 初期明度65%から開始
             mode_menu.groupb_brightness_transition_start = sim_time - 1.0  # イージング済み状態で開始
-            mode_menu.groupb_prev_brightness = 0.5
+            mode_menu.groupb_prev_brightness = 0.65
             mode_menu.groupb_hue_offset = 0.0      # 0–1 の範囲で回転
             mode_menu.groupb_hue_speed  = 0.001     # rad/s 相当（好みで）  
 
@@ -2798,6 +2852,15 @@ while True:
             for ag in agents:
                 ag.tenge_phase = 0.0
         
+        # ── Group A デッド検出 → 生存ノードに差し替え ──
+        _tenge_alive = get_alive_node_ids()
+        if len(_tenge_alive) > 0 and agents[current_groupA_idx].node_id not in _tenge_alive:
+            _tenge_cands = [i for i in range(len(agents))
+                            if i != current_groupA_idx
+                            and agents[i].node_id in _tenge_alive]
+            if _tenge_cands:
+                current_groupA_idx = random.choice(_tenge_cands)
+
         # ─────────────────────────────────────────────
         # 2) 高さを計算
         # ─────────────────────────────────────────────
@@ -2856,10 +2919,13 @@ while True:
                     print(f"バリエーション発動: {mode_menu.variation_pattern}")
                 else:
                     mode_menu.variation_pattern = "normal"
-                # 新しいGroup Aを選択
-                choices = list(range(len(agents)))
-                choices.remove(current_groupA_idx)
-                current_groupA_idx = random.choice(choices)
+                # 新しいGroup Aを選択（生存ノードのみ）
+                alive_choices = [i for i in range(len(agents))
+                                 if i != current_groupA_idx
+                                 and is_node_alive(agents[i].node_id)]
+                if not alive_choices:  # fallback
+                    alive_choices = [i for i in range(len(agents)) if i != current_groupA_idx]
+                current_groupA_idx = random.choice(alive_choices)
                 # osc_client_max.send_message('/trig', 0)
                 selected_node_id = agents[current_groupA_idx].node_id
                 osc_client_max.send_message('/trig', int(selected_node_id))
@@ -2871,7 +2937,17 @@ while True:
                 
                 # crossing が True なら新しい Group A が決まった直後
                 if crossing or not hasattr(mode_menu, "groupa_color"):
-                    h_rand = random.random()                        # 0-1 の乱数 → 色相
+                    # 前回色相から最低 MIN_HUE_SHIFT 離れた色相を選ぶ
+                    MIN_HUE_SHIFT = 0.2   # 72° 以上離す
+                    prev_h = getattr(mode_menu, 'groupa_prev_hue', -1.0)
+                    for _attempt in range(20):
+                        h_rand = random.random()
+                        # 色相環上の最短距離
+                        hue_dist = min(abs(h_rand - prev_h),
+                                       1.0 - abs(h_rand - prev_h))
+                        if hue_dist >= MIN_HUE_SHIFT:
+                            break
+                    mode_menu.groupa_prev_hue = h_rand
                     mode_menu.groupa_color = vector(*colorsys.hsv_to_rgb(h_rand, 1.0, 1.0))
 
                 # ★Group B明度をリセット
@@ -2889,14 +2965,14 @@ while True:
             time_since_initial_fade = sim_time - getattr(mode_menu, 'groupb_initial_fade_start', sim_time - 10)
             
             if time_since_initial_fade < initial_fade_duration:
-                # 初期フェード中：100%から50%へ
+                # 初期フェード中：100%から65%へ
                 t = time_since_initial_fade / initial_fade_duration
                 # easeInOutCubic
                 if t < 0.5:
                     ease_t = 4 * t * t * t
                 else:
                     ease_t = 1 - pow(-2 * t + 2, 3) / 2
-                mode_menu.groupb_brightness = 1.0 - 0.5 * ease_t  # 100%→50%
+                mode_menu.groupb_brightness = 1.0 - 0.35 * ease_t  # 100%→65%
             else:
                 # イージング処理（0.35秒）
                 brightness_transition_duration = 0.35
@@ -2916,9 +2992,9 @@ while True:
                     # 次のすれ違いまでの推定時間（π/速度）
                     estimated_crossing_interval = math.pi / mode_menu.tenge_speed
                     
-                    # 線形補間で明度を計算（1.0→0.5）
+                    # 線形補間で明度を計算（1.0→0.65）— 0.65以下だとLEDで色判別しにくい
                     brightness_progress = min(1.0, time_since_crossing / estimated_crossing_interval)
-                    mode_menu.groupb_brightness = 1.0 - 0.5 * brightness_progress  # 100%から50%へ
+                    mode_menu.groupb_brightness = 1.0 - 0.35 * brightness_progress  # 100%→65%
         
         # ─────────────────────────────────────────────
         # 4) 各エージェントに高さを設定
@@ -5243,9 +5319,15 @@ while True:
             mode_menu.twofus_transition_start = sim_time
             mode_menu.twofus_transition_duration = 2.0
 
-            # 最初の2台をランダムに選ぶ
-            pair = random.sample(range(len(agents)), 2)
+            # 最初の2台をランダムに選ぶ（生存ノードのみ）
+            alive = get_alive_node_ids()
+            alive_indices = [i for i, ag in enumerate(agents) if is_node_alive(ag.node_id)]
+            if len(alive_indices) < 2:
+                alive_indices = list(range(len(agents)))  # fallback
+            pair = random.sample(alive_indices, 2)
             mode_menu.twofus_active = pair          # [idx_a, idx_b]
+            print(f"[The two of us] 生存ノード: {len(alive_indices)}/{len(agents)} "
+                  f"(pair: {[agents[i].node_id for i in pair]})")
             mode_menu.twofus_phase = "descending"   # descending → interacting → swapping
             mode_menu.twofus_swap_target = None      # 交代時の新しい相手idx
 
@@ -5337,6 +5419,57 @@ while True:
         active = mode_menu.twofus_active
         ag_a = agents[active[0]]
         ag_b = agents[active[1]]
+
+        # ── アクティブペアのデッド検出 → 生存ノードに差し替え ──
+        _alive_now = get_alive_node_ids()
+        _has_hb = len(_alive_now) > 0
+        if _has_hb:
+            a_dead = agents[active[0]].node_id not in _alive_now
+            b_dead = agents[active[1]].node_id not in _alive_now
+            if a_dead or b_dead:
+                # 差し替え候補（現ペア＋swap_target以外の生存ノード）
+                _exclude = set(active)
+                if mode_menu.twofus_swap_target is not None:
+                    _exclude.add(mode_menu.twofus_swap_target)
+                _cands = [i for i in range(len(agents))
+                          if i not in _exclude
+                          and agents[i].node_id in _alive_now]
+                if a_dead and b_dead:
+                    # 両方デッド → 生存2台を新ペアに
+                    if len(_cands) >= 2:
+                        pair = random.sample(_cands, 2)
+                        mode_menu.twofus_active = pair
+                        mode_menu.twofus_phase = "descending"
+                        mode_menu.twofus_swap_target = None
+                        active = pair
+                        ag_a = agents[active[0]]
+                        ag_b = agents[active[1]]
+                elif a_dead:
+                    if _cands:
+                        repl = random.choice(_cands)
+                        mode_menu.twofus_active = [repl, active[1]]
+                        mode_menu.twofus_phase = "descending"
+                        mode_menu.twofus_swap_target = None
+                        active = mode_menu.twofus_active
+                        ag_a = agents[active[0]]
+                elif b_dead:
+                    if _cands:
+                        repl = random.choice(_cands)
+                        mode_menu.twofus_active = [active[0], repl]
+                        mode_menu.twofus_phase = "descending"
+                        mode_menu.twofus_swap_target = None
+                        active = mode_menu.twofus_active
+                        ag_b = agents[active[1]]
+                # swap_target もデッドなら差し替え
+                if mode_menu.twofus_swap_target is not None:
+                    st = mode_menu.twofus_swap_target
+                    if agents[st].node_id not in _alive_now:
+                        _st_cands = [i for i in range(len(agents))
+                                     if i not in set(mode_menu.twofus_active)
+                                     and i != st
+                                     and agents[i].node_id in _alive_now]
+                        if _st_cands:
+                            mode_menu.twofus_swap_target = random.choice(_st_cands)
 
         if not in_transition:
             phase = mode_menu.twofus_phase
@@ -5440,9 +5573,13 @@ while True:
                     mode_menu.twofus_leaving = 0
                     mode_menu.twofus_return_speed = random.uniform(
                         twofus_return_speed_min, twofus_return_speed_max)
-                    # 次の相手を選ぶ
+                    # 次の相手を選ぶ（生存ノードのみ）
                     candidates = [i for i in range(len(agents))
-                                  if i != active[0] and i != active[1]]
+                                  if i != active[0] and i != active[1]
+                                  and is_node_alive(agents[i].node_id)]
+                    if not candidates:  # fallback: 全ノードから選ぶ
+                        candidates = [i for i in range(len(agents))
+                                      if i != active[0] and i != active[1]]
                     mode_menu.twofus_swap_target = random.choice(candidates)
                     mode_menu.twofus_farewell_phase = None
                     print(f"[The two of us] 交代開始: "
@@ -5809,3 +5946,16 @@ while True:
 
     if mode_menu.selected != "The two of us":
         mode_menu.twofus_initialized = False
+
+    # ─── デッドノード表示更新 ──────────────────────────
+    alive_set = get_alive_node_ids()
+    has_any_heartbeat = len(alive_set) > 0
+    for ag in agents:
+        if has_any_heartbeat:
+            is_dead = ag.node_id not in alive_set
+        else:
+            is_dead = False  # heartbeat未着＝テスト環境→全員生存扱い
+        # 2D赤リング
+        ag.dead_marker_2d.visible = is_dead
+        # 3Dケーブル色（デッド→赤、生存→グレー）
+        ag.cable.color = vector(1, 0.15, 0.15) if is_dead else color.gray(0.5)
