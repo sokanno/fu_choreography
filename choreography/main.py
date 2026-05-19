@@ -5698,16 +5698,30 @@ while True:
         # ========================================================
         # OSC送信（Max/MSPへ）
         # ========================================================
-        # 各筒の高さと明滅を送信（高さ→音量、明滅→ビブラート）
+        # 各筒の高さ・明滅・色を送信（高さ→音量、明滅→ビブラート、RGB→音色）
         for ag in agents:
             # 高さを正規化: ceiling(2.8m)=0.0, target(2.0m)=1.0, それ以下も1.0
             z_norm = max(0.0, min(1.0, (maxZ - ag.z) / (maxZ - twofus_target_z)))
             # 明滅の明るさ（0〜1）
             brightness = max(0.0, min(1.0, mag(ag.current_color)))
+            # RGB正規化（色の方向を抽出、合計1.0になるように）
+            r_raw = max(0.0, ag.current_color.x)
+            g_raw = max(0.0, ag.current_color.y)
+            b_raw = max(0.0, ag.current_color.z)
+            rgb_sum = r_raw + g_raw + b_raw
+            if rgb_sum > 0.001:
+                r_norm = r_raw / rgb_sum
+                g_norm = g_raw / rgb_sum
+                b_norm = b_raw / rgb_sum
+            else:
+                r_norm = g_norm = b_norm = 0.333
             osc_client_max.send_message('/twofus/tube', [
                 int(ag.node_id),
                 float(z_norm),        # 音量（0=天井で無音, 1=下で最大）
                 float(brightness),    # 明滅値（ビブラート用）
+                float(r_norm),        # 赤比率（rect~ PWM音色）
+                float(g_norm),        # 緑比率（FM合成音色）
+                float(b_norm),        # 青比率（sine音色）
             ])
 
         # フェーズ情報（0=descending, 1=interacting, 2=farewell, 3=swapping）

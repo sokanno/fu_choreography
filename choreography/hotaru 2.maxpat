@@ -11,9 +11,9 @@
 		"classnamespace": "box",
 		"rect": [
 			440.0,
-			100.0,
+			353.0,
 			1253.0,
-			983.0
+			1189.0
 		],
 		"bglocked": 0,
 		"openinpresentation": 0,
@@ -1419,8 +1419,8 @@
 					"numinlets": 1,
 					"numoutlets": 0,
 					"patching_rect": [
-						549.0,
-						423.0,
+						530.0,
+						454.0,
 						80.0,
 						20.0
 					],
@@ -1438,8 +1438,8 @@
 					],
 					"parameter_enable": 0,
 					"patching_rect": [
-						530.0,
-						454.0,
+						550.0,
+						474.0,
 						24.0,
 						24.0
 					]
@@ -1462,57 +1462,6 @@
 					],
 					"text": "target 0, mute 1"
 				}
-			},
-			{
-				"box": {
-					"id": "obj-110",
-					"maxclass": "newobj",
-					"numinlets": 2,
-					"numoutlets": 1,
-					"outlettype": [
-						"bang"
-					],
-					"patching_rect": [
-						530.0,
-						40.0,
-						72.0,
-						22.0
-					],
-					"text": "delay 5000"
-				}
-			},
-			{
-				"box": {
-					"id": "obj-111",
-					"maxclass": "message",
-					"numinlets": 2,
-					"numoutlets": 1,
-					"outlettype": [
-						""
-					],
-					"patching_rect": [
-						530.0,
-						68.0,
-						103.0,
-						22.0
-					],
-					"text": "target 0, mute 1"
-				}
-			},
-			{
-				"box": {
-					"id": "obj-112",
-					"maxclass": "comment",
-					"numinlets": 1,
-					"numoutlets": 0,
-					"patching_rect": [
-						608.0,
-						40.0,
-						180.0,
-						20.0
-					],
-					"text": "auto-mute after 5s silence"
-				}
 			}
 		],
 		"lines": [
@@ -1524,30 +1473,6 @@
 					],
 					"source": [
 						"obj-1",
-						0
-					]
-				}
-			},
-			{
-				"patchline": {
-					"destination": [
-						"obj-102",
-						0
-					],
-					"source": [
-						"obj-101",
-						0
-					]
-				}
-			},
-			{
-				"patchline": {
-					"destination": [
-						"obj-7",
-						0
-					],
-					"source": [
-						"obj-102",
 						0
 					]
 				}
@@ -2152,12 +2077,25 @@
 				"patchline": {
 					"destination": [
 						"obj-44",
-						1
+						0
 					],
 					"order": 1,
 					"source": [
 						"obj-7",
-						1
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"destination": [
+						"obj-45",
+						0
+					],
+					"order": 0,
+					"source": [
+						"obj-7",
+						0
 					]
 				}
 			},
@@ -2165,22 +2103,8 @@
 				"patchline": {
 					"destination": [
 						"obj-44",
-						0
-					],
-					"order": 1,
-					"source": [
-						"obj-7",
-						0
-					]
-				}
-			},
-			{
-				"patchline": {
-					"destination": [
-						"obj-45",
 						1
 					],
-					"order": 0,
 					"source": [
 						"obj-7",
 						1
@@ -2191,36 +2115,22 @@
 				"patchline": {
 					"destination": [
 						"obj-45",
-						0
+						1
 					],
-					"order": 0,
 					"source": [
 						"obj-7",
-						0
+						1
 					]
 				}
 			},
 			{
 				"patchline": {
 					"destination": [
-						"obj-110",
-						0
-					],
-					"order": 2,
-					"source": [
-						"obj-3",
-						0
-					]
-				}
-			},
-			{
-				"patchline": {
-					"destination": [
-						"obj-111",
+						"obj-102",
 						0
 					],
 					"source": [
-						"obj-110",
+						"obj-101",
 						0
 					]
 				}
@@ -2232,7 +2142,7 @@
 						0
 					],
 					"source": [
-						"obj-111",
+						"obj-102",
 						0
 					]
 				}
@@ -2352,7 +2262,7 @@
 			},
 			{
 				"name": "hotaru.json",
-				"bootpath": "~/works/25_FU/_dev/python/mqtt_python/choreography",
+				"bootpath": "~/works/25_FU/_dev/FU_audio",
 				"patcherrelativepath": ".",
 				"type": "JSON",
 				"implicit": 1
@@ -2360,13 +2270,13 @@
 			{
 				"name": "hotaru.maxsnap",
 				"bootpath": "~/Documents/Max 8/Snapshots",
-				"patcherrelativepath": "../../../../../../Documents/Max 8/Snapshots",
+				"patcherrelativepath": "../../../../Documents/Max 8/Snapshots",
 				"type": "mx@s",
 				"implicit": 1
 			},
 			{
 				"name": "hotaruVoice.maxpat",
-				"bootpath": "~/works/25_FU/_dev/python/mqtt_python/choreography",
+				"bootpath": "~/works/25_FU/_dev/FU_audio",
 				"patcherrelativepath": ".",
 				"type": "JSON",
 				"implicit": 1
@@ -2374,28 +2284,28 @@
 			{
 				"name": "hotaru[1].maxsnap",
 				"bootpath": "~/Documents/Max 8/Snapshots",
-				"patcherrelativepath": "../../../../../../Documents/Max 8/Snapshots",
+				"patcherrelativepath": "../../../../Documents/Max 8/Snapshots",
 				"type": "mx@s",
 				"implicit": 1
 			},
 			{
 				"name": "hotaru[2].maxsnap",
 				"bootpath": "~/Documents/Max 8/Snapshots",
-				"patcherrelativepath": "../../../../../../Documents/Max 8/Snapshots",
+				"patcherrelativepath": "../../../../Documents/Max 8/Snapshots",
 				"type": "mx@s",
 				"implicit": 1
 			},
 			{
 				"name": "hotaru[3].maxsnap",
 				"bootpath": "~/Documents/Max 8/Snapshots",
-				"patcherrelativepath": "../../../../../../Documents/Max 8/Snapshots",
+				"patcherrelativepath": "../../../../Documents/Max 8/Snapshots",
 				"type": "mx@s",
 				"implicit": 1
 			},
 			{
 				"name": "yafr2.maxpat",
 				"bootpath": "~/Library/Application Support/Cycling '74/Max 8/Examples/effects/reverb/lib",
-				"patcherrelativepath": "../../../../../../Library/Application Support/Cycling '74/Max 8/Examples/effects/reverb/lib",
+				"patcherrelativepath": "../../../../Library/Application Support/Cycling '74/Max 8/Examples/effects/reverb/lib",
 				"type": "JSON",
 				"implicit": 1
 			}
