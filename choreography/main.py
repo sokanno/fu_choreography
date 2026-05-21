@@ -2898,6 +2898,10 @@ while True:
                     mode_menu.last_crossing_phase = phase_a
             
             if crossing:
+                # すれ違い時刻を記録（Group Bの向き制御用）
+                mode_menu.last_crossing_time = sim_time
+                mode_menu.tenge_yaw_snapped = False  # スナップ未実行フラグ
+
                 # すれ違い回数をカウント
                 mode_menu.crossing_count = getattr(mode_menu, 'crossing_count', 0) + 1
                 
@@ -3143,17 +3147,25 @@ while True:
             if in_transition:
                 # トランジション中は徐々に動きを開始
                 k = min(1.0, ease_speed * dt * eased_progress)
-                # Pitchは0に向かって補間
                 ag.pitch = ag.tenge_start_pitch + (0 - ag.tenge_start_pitch) * eased_progress
-            else:
-                # 通常のイージング
+                dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * k
+            elif ag.group == "A":
+                # Group A: 従来通りイージング
                 k = min(1.0, ease_speed * dt)
-                dpitch = tgt_pitch - ag.pitch
-                ag.pitch += dpitch * k
-            
-            # Yawのイージング
-            dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
-            ag.yaw += dyaw * k
+                ag.pitch += (tgt_pitch - ag.pitch) * k
+                dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+                ag.yaw += dyaw * k
+            else:
+                # Group B: すれ違い後1秒でスナップ（ロボ側イージングに任せる）
+                time_since_crossing = sim_time - getattr(mode_menu, 'last_crossing_time', -999)
+                if time_since_crossing < 1.0:
+                    # すれ違い後1秒間：向きを保持（何もしない）
+                    pass
+                else:
+                    # 1秒経過：目標方向に一気にセット
+                    ag.yaw = tgt_yaw
+                    ag.pitch = tgt_pitch
             
             # actual_pitchを更新
             ag.actual_pitch = ag.pitch
