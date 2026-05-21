@@ -2900,7 +2900,18 @@ while True:
             if crossing:
                 # すれ違い時刻を記録（Group Bの向き制御用）
                 mode_menu.last_crossing_time = sim_time
-                mode_menu.tenge_yaw_snapped = False  # スナップ未実行フラグ
+
+                # 各エージェントのGroup Aからの距離→スナップ遅延を計算
+                # 最近=0秒、最遠=2秒で同心円状に広がる
+                lead = agents[current_groupA_idx]
+                dists = []
+                for ag in agents:
+                    dists.append(math.hypot(ag.x - lead.x, ag.y - lead.y))
+                max_dist = max(dists) if dists else 1.0
+                ripple_duration = 2.0  # 波紋が全体に広がる時間
+                for i, ag in enumerate(agents):
+                    ag.tenge_snap_delay = (dists[i] / max_dist) * ripple_duration
+                    ag.tenge_snapped = False  # 個別のスナップフラグ
 
                 # すれ違い回数をカウント
                 mode_menu.crossing_count = getattr(mode_menu, 'crossing_count', 0) + 1
@@ -3115,20 +3126,14 @@ while True:
                     ag.autonomous_mode = False
                     tgt_yaw, tgt_pitch = ag.yaw, ag.pitch
             
-            # B) Group Bはリーダーを向く（半径2.5m以内のみ）
+            # B) Group Bはリーダーを向く（波紋状に反応）
             else:  # ag.group == "B"
                 lead = agents[current_groupA_idx]
                 dx, dy = lead.x - ag.x, lead.y - ag.y
                 dz = lead.z - ag.z
-                dist_to_leader = math.hypot(dx, dy)
-
-                if dist_to_leader <= 2.5:
-                    base_yaw = math.degrees(math.atan2(dy, dx)) + 120.0  # CCW補正
-                    base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-                    tgt_yaw, tgt_pitch = base_yaw, base_pitch
-                else:
-                    # 2.5m以上離れている：向きを保持
-                    tgt_yaw, tgt_pitch = ag.yaw, ag.pitch
+                base_yaw = math.degrees(math.atan2(dy, dx)) + 120.0  # CCW補正
+                base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+                tgt_yaw, tgt_pitch = base_yaw, base_pitch
 
                 ag.autonomous_mode = False
 
@@ -3146,15 +3151,21 @@ while True:
                 dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
                 ag.yaw += dyaw * k
             else:
-                # Group B: すれ違いの瞬間にスナップ（ロボ側イージングに任せる）
-                if getattr(mode_menu, 'tenge_yaw_snapped', True) is False:
-                    # すれ違い直後：一気にセット
+                # Group B: 波紋状にスナップ（距離に応じた遅延後に一気にセット）
+                time_since_crossing = sim_time - getattr(mode_menu, 'last_crossing_time', -999)
+                snap_delay = getattr(ag, 'tenge_snap_delay', 0.0)
+                already_snapped = getattr(ag, 'tenge_snapped', True)
+
+                if not already_snapped and time_since_crossing >= snap_delay:
+                    # 遅延経過：スナップ！
                     ag.yaw = tgt_yaw
                     ag.pitch = tgt_pitch
-                else:
-                    # 通常時：目標方向を毎フレームセット
+                    ag.tenge_snapped = True
+                elif already_snapped:
+                    # スナップ済み：毎フレーム追従
                     ag.yaw = tgt_yaw
                     ag.pitch = tgt_pitch
+                # else: まだ遅延中→向きを保持（何もしない）
             
             # actual_pitchを更新
             ag.actual_pitch = ag.pitch
@@ -3180,10 +3191,6 @@ while True:
                     0
                 )
         
-        # すれ違いスナップのフラグを消化（全員に反映済み）
-        if not getattr(mode_menu, 'tenge_yaw_snapped', True):
-            mode_menu.tenge_yaw_snapped = True
-
         # ─────────────────────────────────────────────
         # 6) 色の処理（トランジション対応）
         # ─────────────────────────────────────────────
