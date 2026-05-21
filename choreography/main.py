@@ -3121,7 +3121,7 @@ while True:
                 lead = agents[current_groupA_idx]
                 dx, dy = lead.x - ag.x, lead.y - ag.y
                 dz = lead.z - ag.z
-                base_yaw = math.degrees(math.atan2(dy, dx))
+                base_yaw = math.degrees(math.atan2(dy, dx)) + 120.0  # CCW補正
                 base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
                 
                 # 近くに観客がいるかチェック
