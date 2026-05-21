@@ -2934,7 +2934,9 @@ while True:
                 max_dist = max(dists) if dists else 1.0
                 ripple_duration = 2.0  # 波紋が全体に広がる時間
                 for i, ag in enumerate(agents):
-                    ag.tenge_snap_delay = (dists[i] / max_dist) * ripple_duration
+                    base_delay = (dists[i] / max_dist) * ripple_duration
+                    ag.tenge_snap_delay = base_delay * random.uniform(0.75, 1.25)  # ±25%揺らぎ
+                    ag.tenge_dip_depth = 1.0 * random.uniform(0.75, 1.0)  # 暗さ -25%揺らぎ
                     ag.tenge_snapped = False
                 # osc_client_max.send_message('/trig', 0)
                 selected_node_id = agents[current_groupA_idx].node_id
@@ -3035,12 +3037,13 @@ while True:
                     snap_delay = getattr(ag, 'tenge_snap_delay', 0.0)
                     t_since_snap = time_since_crossing - snap_delay
                     if 0.0 <= t_since_snap < 1.2:
-                        # 0〜0.3s: 暗くなる（1.0→0.0）、0.3〜1.2s: 戻る（0.0→1.0）
+                        # 0〜0.3s: 暗くなる、0.3〜1.2s: 戻る（深さは per-agent 揺らぎ）
+                        dip_depth = getattr(ag, 'tenge_dip_depth', 1.0)
                         if t_since_snap < 0.3:
-                            ripple_dip = 1.0 - (t_since_snap / 0.3)
+                            ripple_dip = 1.0 - dip_depth * (t_since_snap / 0.3)
                         else:
                             recovery = (t_since_snap - 0.3) / 0.9
-                            ripple_dip = recovery
+                            ripple_dip = 1.0 - dip_depth * (1.0 - recovery)
 
                 final_brightness = brightness * ripple_dip
                 target_color = vector(r * final_brightness,
