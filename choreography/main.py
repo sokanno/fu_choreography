@@ -2901,32 +2901,20 @@ while True:
                 # すれ違い時刻を記録（Group Bの向き制御用）
                 mode_menu.last_crossing_time = sim_time
 
-                # 各エージェントのGroup Aからの距離→スナップ遅延を計算
-                # 最近=0秒、最遠=2秒で同心円状に広がる
-                lead = agents[current_groupA_idx]
-                dists = []
-                for ag in agents:
-                    dists.append(math.hypot(ag.x - lead.x, ag.y - lead.y))
-                max_dist = max(dists) if dists else 1.0
-                ripple_duration = 2.0  # 波紋が全体に広がる時間
-                for i, ag in enumerate(agents):
-                    ag.tenge_snap_delay = (dists[i] / max_dist) * ripple_duration
-                    ag.tenge_snapped = False  # 個別のスナップフラグ
-
                 # すれ違い回数をカウント
                 mode_menu.crossing_count = getattr(mode_menu, 'crossing_count', 0) + 1
-                
+
                 # 2-4回に1回バリエーションを発動
                 variation_interval = random.randint(2, 4)
                 if mode_menu.crossing_count % variation_interval == 0:
                     # パターンをランダムに選択
                     mode_menu.variation_pattern = random.choice(["random", "slope"])
                     mode_menu.variation_start_time = sim_time
-                    
+
                     if mode_menu.variation_pattern == "slope":
                         # 傾斜の方向をランダムに決定
                         mode_menu.slope_angle = random.uniform(0, 2 * math.pi)
-                    
+
                     print(f"バリエーション発動: {mode_menu.variation_pattern}")
                 else:
                     mode_menu.variation_pattern = "normal"
@@ -2937,6 +2925,17 @@ while True:
                 if not alive_choices:  # fallback
                     alive_choices = [i for i in range(len(agents)) if i != current_groupA_idx]
                 current_groupA_idx = random.choice(alive_choices)
+
+                # 波紋の距離計算（★新しい Group A の位置を中心に）
+                lead = agents[current_groupA_idx]
+                dists = []
+                for ag in agents:
+                    dists.append(math.hypot(ag.x - lead.x, ag.y - lead.y))
+                max_dist = max(dists) if dists else 1.0
+                ripple_duration = 2.0  # 波紋が全体に広がる時間
+                for i, ag in enumerate(agents):
+                    ag.tenge_snap_delay = (dists[i] / max_dist) * ripple_duration
+                    ag.tenge_snapped = False
                 # osc_client_max.send_message('/trig', 0)
                 selected_node_id = agents[current_groupA_idx].node_id
                 osc_client_max.send_message('/trig', int(selected_node_id))
