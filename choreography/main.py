@@ -5811,18 +5811,8 @@ while True:
             for ld3, ld2, _ in ag.leds:
                 ld3.color = ld2.color = ag.current_color
 
-            # ダウンライト（スポットライト: 3秒フェードイン/アウト、最大10%）
-            if is_leaving:
-                dl_target = 0.0   # 去る筒: フェードアウト
-            elif is_active_a or is_active_b or is_new:
-                dl_target = 0.1   # アクティブ/降下中: 10%
-            else:
-                dl_target = 0.0   # モブ: オフ
-            dl_step = (0.1 / 3.0) * dt  # 0.1 / 3.0s
-            if ag.downlight_brightness < dl_target:
-                ag.downlight_brightness = min(dl_target, ag.downlight_brightness + dl_step)
-            elif ag.downlight_brightness > dl_target:
-                ag.downlight_brightness = max(dl_target, ag.downlight_brightness - dl_step)
+            # ダウンライト（オフ）
+            ag.downlight_brightness = 0.0
             update_downlight_display(ag)
 
         # ========================================================
