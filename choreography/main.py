@@ -3115,33 +3115,22 @@ while True:
                     ag.autonomous_mode = False
                     tgt_yaw, tgt_pitch = ag.yaw, ag.pitch
             
-            # B) Group Bはリーダーを向く or 近くの観客を優先
+            # B) Group Bはリーダーを向く（半径2.5m以内のみ）
             else:  # ag.group == "B"
-                # まずリーダー（Group A）の方向を計算
                 lead = agents[current_groupA_idx]
                 dx, dy = lead.x - ag.x, lead.y - ag.y
                 dz = lead.z - ag.z
-                base_yaw = math.degrees(math.atan2(dy, dx)) + 120.0  # CCW補正
-                base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-                
-                # 近くに観客がいるかチェック
-                closest, md = None, detect_radius
-                for p in audiences:
-                    d = math.hypot(p.x - ag.x, p.y - ag.y)
-                    if d < md:
-                        md, closest = d, p
-                
-                if closest:
-                    dx2, dy2 = closest.x - ag.x, closest.y - ag.y
-                    dz2 = closest.height - ag.z
-                    tgt_yaw = math.degrees(math.atan2(dy2, dx2))
-                    tgt_pitch = math.degrees(math.atan2(dz2, math.hypot(dx2, dy2)))
-                    tgt_pitch = max(-60, min(60, tgt_pitch))
-                    
-                    ag.autonomous_mode = False
-                else:
-                    ag.autonomous_mode = False
+                dist_to_leader = math.hypot(dx, dy)
+
+                if dist_to_leader <= 2.5:
+                    base_yaw = math.degrees(math.atan2(dy, dx)) + 120.0  # CCW補正
+                    base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
                     tgt_yaw, tgt_pitch = base_yaw, base_pitch
+                else:
+                    # 2.5m以上離れている：向きを保持
+                    tgt_yaw, tgt_pitch = ag.yaw, ag.pitch
+
+                ag.autonomous_mode = False
 
             # C) 向きの更新（トランジション対応）
             if in_transition:
@@ -3157,13 +3146,13 @@ while True:
                 dyaw = ((tgt_yaw - ag.yaw + 540) % 360) - 180
                 ag.yaw += dyaw * k
             else:
-                # Group B: すれ違い後1秒でスナップ（ロボ側イージングに任せる）
-                time_since_crossing = sim_time - getattr(mode_menu, 'last_crossing_time', -999)
-                if time_since_crossing < 2.0:
-                    # すれ違い後1秒間：向きを保持（何もしない）
-                    pass
+                # Group B: すれ違いの瞬間にスナップ（ロボ側イージングに任せる）
+                if getattr(mode_menu, 'tenge_yaw_snapped', True) is False:
+                    # すれ違い直後：一気にセット
+                    ag.yaw = tgt_yaw
+                    ag.pitch = tgt_pitch
                 else:
-                    # 1秒経過：目標方向に一気にセット
+                    # 通常時：目標方向を毎フレームセット
                     ag.yaw = tgt_yaw
                     ag.pitch = tgt_pitch
             
@@ -3191,6 +3180,10 @@ while True:
                     0
                 )
         
+        # すれ違いスナップのフラグを消化（全員に反映済み）
+        if not getattr(mode_menu, 'tenge_yaw_snapped', True):
+            mode_menu.tenge_yaw_snapped = True
+
         # ─────────────────────────────────────────────
         # 6) 色の処理（トランジション対応）
         # ─────────────────────────────────────────────
