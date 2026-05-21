@@ -3034,13 +3034,13 @@ while True:
                     time_since_crossing = sim_time - getattr(mode_menu, 'last_crossing_time', -999)
                     snap_delay = getattr(ag, 'tenge_snap_delay', 0.0)
                     t_since_snap = time_since_crossing - snap_delay
-                    if 0.0 <= t_since_snap < 0.6:
-                        # 0〜0.15s: 暗くなる（1.0→0.3）、0.15〜0.6s: 戻る（0.3→1.0）
-                        if t_since_snap < 0.15:
-                            ripple_dip = 1.0 - 0.7 * (t_since_snap / 0.15)
+                    if 0.0 <= t_since_snap < 1.2:
+                        # 0〜0.3s: 暗くなる（1.0→0.0）、0.3〜1.2s: 戻る（0.0→1.0）
+                        if t_since_snap < 0.3:
+                            ripple_dip = 1.0 - (t_since_snap / 0.3)
                         else:
-                            recovery = (t_since_snap - 0.15) / 0.45
-                            ripple_dip = 0.3 + 0.7 * recovery
+                            recovery = (t_since_snap - 0.3) / 0.9
+                            ripple_dip = recovery
 
                 final_brightness = brightness * ripple_dip
                 target_color = vector(r * final_brightness,
