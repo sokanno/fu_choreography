@@ -3159,7 +3159,7 @@ while True:
             else:
                 # Group B: すれ違い後1秒でスナップ（ロボ側イージングに任せる）
                 time_since_crossing = sim_time - getattr(mode_menu, 'last_crossing_time', -999)
-                if time_since_crossing < 1.0:
+                if time_since_crossing < 2.0:
                     # すれ違い後1秒間：向きを保持（何もしない）
                     pass
                 else:
