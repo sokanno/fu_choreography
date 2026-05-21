@@ -3028,9 +3028,25 @@ while True:
 
                 # 3) 明度フェードを掛ける
                 brightness   = getattr(mode_menu, 'groupb_brightness', 1.0)
-                target_color = vector(r * brightness,
-                                    g * brightness,
-                                    b * brightness)
+
+                # 4) 波紋ディップ（スナップ時に一瞬暗くなる）
+                ripple_dip = 1.0
+                if not in_transition:
+                    time_since_crossing = sim_time - getattr(mode_menu, 'last_crossing_time', -999)
+                    snap_delay = getattr(ag, 'tenge_snap_delay', 0.0)
+                    t_since_snap = time_since_crossing - snap_delay
+                    if 0.0 <= t_since_snap < 0.6:
+                        # 0〜0.15s: 暗くなる（1.0→0.3）、0.15〜0.6s: 戻る（0.3→1.0）
+                        if t_since_snap < 0.15:
+                            ripple_dip = 1.0 - 0.7 * (t_since_snap / 0.15)
+                        else:
+                            recovery = (t_since_snap - 0.15) / 0.45
+                            ripple_dip = 0.3 + 0.7 * recovery
+
+                final_brightness = brightness * ripple_dip
+                target_color = vector(r * final_brightness,
+                                    g * final_brightness,
+                                    b * final_brightness)
  
             # 高さの設定
             if in_transition:
