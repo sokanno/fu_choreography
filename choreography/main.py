@@ -2606,7 +2606,7 @@ while True:
                         ag.last_star_time = sim_time
                         ag.is_flashing = True
                         # 各星の明るさをランダムに設定
-                        ag.star_brightness = random.uniform(0.02, 0.04)
+                        ag.star_brightness = random.uniform(0.04, 0.07)
                 
                 # 光っている最中の処理
                 if hasattr(ag, 'is_flashing') and ag.is_flashing:
