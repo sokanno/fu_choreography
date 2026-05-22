@@ -2575,7 +2575,24 @@ while True:
             
             # 基本の空の色を取得
             r, g, b = get_sky_color(day_time, height_ratio)
-            
+
+            # ★夕焼けグラデーション（右列ほど赤く染まる）
+            if 0.65 <= day_time <= 0.85:
+                # 時間による強度（0.65→0, 0.72→ピーク, 0.85→0）
+                if day_time < 0.72:
+                    sunset_time_t = (day_time - 0.65) / 0.07
+                else:
+                    sunset_time_t = 1.0 - (day_time - 0.72) / 0.13
+                sunset_time_t = max(0.0, min(1.0, sunset_time_t))
+                # x座標によるグラデーション（右ほど強い: x=0で0, x=1.8で1.0）
+                sunset_x_t = max(0.0, ag.x / 1.8)
+                sunset_strength = sunset_time_t * sunset_x_t * 0.35  # 最大35%ブレンド
+                # 夕焼け色（暖かいオレンジ〜赤）
+                sunset_r, sunset_g, sunset_b = 0.95, 0.25, 0.05
+                r = r + (sunset_r - r) * sunset_strength
+                g = g + (sunset_g - g) * sunset_strength
+                b = b + (sunset_b - b) * sunset_strength
+
             # ★夜の演出：自然でランダムな星効果
             if 0.0 <= day_time <= 0.2 or 0.85 <= day_time <= 1.0:  # 夜時間帯
                 # 各ロボットに対して完全にランダムな星の瞬き
