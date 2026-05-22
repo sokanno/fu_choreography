@@ -2586,7 +2586,7 @@ while True:
                 sunset_time_t = max(0.0, min(1.0, sunset_time_t))
                 # x座標によるグラデーション（右ほど強い: x=0で0, x=1.8で1.0）
                 sunset_x_t = max(0.0, ag.x / 1.8)
-                sunset_strength = sunset_time_t * sunset_x_t * 0.6  # 最大60%ブレンド
+                sunset_strength = sunset_time_t * sunset_x_t * 0.9  # 最大90%ブレンド
                 # 夕焼け色（暖かいオレンジ〜赤）
                 sunset_r, sunset_g, sunset_b = 0.95, 0.25, 0.05
                 r = r + (sunset_r - r) * sunset_strength
