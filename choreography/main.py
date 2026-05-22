@@ -2468,8 +2468,8 @@ while True:
             ag.shadow_factor = current_shadow + (target_shadow - current_shadow) * min(1.0, dt * 3.0)
             
             # (H) 色更新（空の演出バージョン）
-            # ★空の色彩サイクル（1日の空の変化）- 1サイクル=1.5分
-            cycle_time = sim_time / 90.0  # 90秒で1日
+            # ★空の色彩サイクル（1日の空の変化）- 1サイクル=2分
+            cycle_time = sim_time / 120.0  # 120秒で1日
             
             # 1サイクルを1日として、0.0-1.0の時間として正規化
             day_time = cycle_time % 1.0
