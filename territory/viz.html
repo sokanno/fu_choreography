@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>FU territory viz</title>
+<style>
+  body { background:#0b0b0b; color:#ddd; font-family:ui-monospace,Menlo,monospace;
+         margin:0; padding:16px; }
+  #bar { display:flex; gap:18px; align-items:center; font-size:13px;
+         margin-bottom:10px; flex-wrap:wrap; }
+  .meter { display:inline-flex; align-items:center; gap:6px; }
+  .meter .track { width:110px; height:8px; background:#222; border-radius:4px;
+                  overflow:hidden; }
+  .meter .fill { height:100%; width:0%; }
+  #cv { display:block; background:#111; border-radius:10px; }
+  #log { margin-top:10px; font-size:12px; color:#999; white-space:pre;
+         line-height:1.5; height:190px; overflow:hidden; }
+  #stale { color:#e24b4a; display:none; margin-left:auto; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span id="clock">t 0:00</span>
+  <span class="meter">R<span class="track"><span class="fill" id="rFill"
+    style="background:#ddd"></span></span><span id="rVal">0.00</span></span>
+  <span class="meter">C<span class="track"><span class="fill" id="cFill"
+    style="background:#f08c1e"></span></span><span id="cVal">0.00</span></span>
+  <span id="camps">陣営 0</span>
+  <span id="shifts">転換 0回</span>
+  <span id="hi"></span>
+  <button id="modeBtn" style="background:#222;color:#ddd;border:1px solid #444;
+    border-radius:6px;padding:3px 10px;font:inherit;cursor:pointer;">
+    中間色: 加法混色</button>
+  <span id="stale">送信停止中</span>
+</div>
+<canvas id="cv" width="960" height="640"></canvas>
+<canvas id="ts" width="960" height="110" style="margin-top:8px;background:#111;border-radius:10px;"></canvas>
+<div id="log"></div>
+<script>
+const W=960,H=640;
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let robots=null,nbr=[];
+// world->px. Long world axis goes horizontal; extent comes from robots.json (extent_m) + 0.4 m margin.
+let ext={x:[-1.8,1.8],y:[-2.7,2.7]},rotView=true;
+function toPx(wx,wy){
+  const M=0.4,ax=ext.x[0]-M,bx=ext.x[1]+M,ay=ext.y[0]-M,by=ext.y[1]+M;
+  if(rotView)return[(wy-ay)/(by-ay)*W,(wx-ax)/(bx-ax)*H];
+  return[(wx-ax)/(bx-ax)*W,(by-wy)/(by-ay)*H];
+}
+function angd(a,b){let d=a-b;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d;}
+function angMap(a){a=angd(a,0);return a>=0?a*(2/3):a*(4/3);}
+function hue2rgb(ang,mag){
+  const hh=((ang%(2*Math.PI))+2*Math.PI)%(2*Math.PI)/(Math.PI/3);
+  const x=1-Math.abs(hh%2-1);
+  let r=0,g=0,b=0;
+  if(hh<1){r=1;g=x;}else if(hh<2){r=x;g=1;}else if(hh<3){g=1;b=x;}
+  else if(hh<4){g=x;b=1;}else if(hh<5){r=x;b=1;}else{r=1;b=x;}
+  const v=0.12+0.88*Math.min(1,mag);
+  return[Math.round(255*r*v),Math.round(255*g*v),Math.round(255*b*v)];
+}
+async function loadRobots(){
+  const r=await fetch('robots.json',{cache:'no-store'});
+  const rj=await r.json();robots=rj.robots;
+  if(rj.extent_m){ext=rj.extent_m;rotView=(ext.y[1]-ext.y[0])>(ext.x[1]-ext.x[0]);}
+  for(let i=0;i<robots.length;i++){
+    nbr.push([]);
+    for(let j=0;j<robots.length;j++){
+      if(i===j)continue;
+      const dx=robots[i].world_x-robots[j].world_x,
+            dy=robots[i].world_y-robots[j].world_y;
+      if(Math.hypot(dx,dy)<1.35)nbr[i].push(j);
+    }
+  }
+}
+let lastT=-1,staleCount=0,colorMode=1;
+const MODE_NAMES=['中間色: 暗転','中間色: 加法混色','中間色: 彩度キープ'];
+document.getElementById('modeBtn').textContent=MODE_NAMES[1];
+document.getElementById('modeBtn').onclick=()=>{
+  colorMode=(colorMode+1)%3;
+  document.getElementById('modeBtn').textContent=MODE_NAMES[colorMode];
+};
+let dispAng=null;  // smoothed display hue angle (kills flicker at low conviction)
+const tsCv=document.getElementById('ts'),tsCtx=tsCv.getContext('2d');
+const TSW=960,TSH=110,histR=[],histC=[],histShift=[];
+let lastShifts=null;
+function drawTs(){
+  tsCtx.fillStyle='#111';tsCtx.fillRect(0,0,TSW,TSH);
+  tsCtx.strokeStyle='rgba(255,255,255,0.15)';
+  tsCtx.beginPath();tsCtx.moveTo(0,TSH*0.15);tsCtx.lineTo(TSW,TSH*0.15);tsCtx.stroke();
+  for(let q=0;q<histShift.length;q++){
+    if(histShift[q]){
+      tsCtx.strokeStyle='rgba(120,180,255,0.6)';
+      tsCtx.beginPath();tsCtx.moveTo(q,0);tsCtx.lineTo(q,TSH);tsCtx.stroke();
+    }
+  }
+  for(let q=1;q<histR.length;q++){
+    tsCtx.strokeStyle='rgba(255,255,255,0.85)';
+    tsCtx.beginPath();
+    tsCtx.moveTo(q-1,TSH-histR[q-1]*TSH*0.92);
+    tsCtx.lineTo(q,TSH-histR[q]*TSH*0.92);tsCtx.stroke();
+    tsCtx.strokeStyle='rgba(240,140,30,0.9)';
+    tsCtx.beginPath();
+    tsCtx.moveTo(q-1,TSH-histC[q-1]*TSH*0.92);
+    tsCtx.lineTo(q,TSH-histC[q]*TSH*0.92);tsCtx.stroke();
+  }
+}
+function draw(s){
+  ctx.fillStyle='#111';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.06)';ctx.lineWidth=1;
+  for(let i=0;i<robots.length;i++)for(const j of nbr[i]){
+    if(j>i){
+      const a=toPx(robots[i].world_x,robots[i].world_y),
+            b=toPx(robots[j].world_x,robots[j].world_y);
+      ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+    }
+  }
+  const c1=hue2rgb(angMap(s.psi),1),c2=hue2rgb(angMap(s.psi+Math.PI),1);
+  if(!dispAng)dispAng=s.op.slice();
+  for(let i=0;i<robots.length;i++){
+    const p=toPx(robots[i].world_x,robots[i].world_y);
+    dispAng[i]+=angd(s.op[i],dispAng[i])*0.25;
+    let c;
+    if(colorMode===1){
+      const t=(s.conv[i]*Math.cos(s.op[i]-s.psi)+1)/2;
+      const w1=Math.min(1,Math.max(0,2*t)),w2=Math.min(1,Math.max(0,2-2*t));
+      c=[Math.min(255,Math.round(c1[0]*w1+c2[0]*w2)),
+         Math.min(255,Math.round(c1[1]*w1+c2[1]*w2)),
+         Math.min(255,Math.round(c1[2]*w1+c2[2]*w2))];
+    }else if(colorMode===2){
+      c=hue2rgb(angMap(dispAng[i]),1);
+    }else{
+      c=hue2rgb(angMap(s.op[i]),s.conv[i]);
+    }
+    const len=(34+26*s.ht[i])*(1-0.25*Math.abs(s.tilt[i]));  // 高さ=近接で伸び、チルトで縮む
+    const hw=8+5*s.ht[i];
+    ctx.save();ctx.translate(p[0],p[1]);ctx.rotate(rotView?(Math.PI/2-s.th[i]):-s.th[i]);  // world yaw -> canvas (y flipped / axes swapped)
+    ctx.fillStyle='rgb('+c[0]+','+c[1]+','+c[2]+')';
+    ctx.beginPath();ctx.roundRect(-len,-hw/2,len*2,hw,hw/2);ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,'+(0.7*s.fat[i]).toFixed(2)+')';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.roundRect(-len,-hw/2,len*2,hw,hw/2);ctx.stroke();
+    const headA=s.tilt[i]>0?0.95:0.45;   // 下向き=明るい頭、上向き=沈んだ頭
+    ctx.fillStyle='rgba(255,255,255,'+headA+')';
+    ctx.beginPath();ctx.arc(len-6,0,3.5,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
+  const dx=W-56,dy=H-56,Rr=30;
+  ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(dx,dy,Rr,0,Math.PI*2);ctx.stroke();
+  ctx.lineWidth=3;
+  ctx.strokeStyle='rgb('+c1[0]+','+c1[1]+','+c1[2]+')';
+  ctx.beginPath();ctx.moveTo(dx,dy);
+  ctx.lineTo(dx+Math.cos(s.psi)*Rr,dy+Math.sin(s.psi)*Rr);ctx.stroke();
+  ctx.strokeStyle='rgb('+c2[0]+','+c2[1]+','+c2[2]+')';
+  ctx.beginPath();ctx.moveTo(dx,dy);
+  ctx.lineTo(dx-Math.cos(s.psi)*Rr,dy-Math.sin(s.psi)*Rr);ctx.stroke();
+}
+function bar(id,valId,v){
+  document.getElementById(id).style.width=Math.round(v*100)+'%';
+  document.getElementById(valId).textContent=v.toFixed(2);
+}
+async function tick(){
+  try{
+    const r=await fetch('viz_state.json?ts='+Date.now(),{cache:'no-store'});
+    const s=await r.json();
+    const fresh=s.t!==lastT;
+    if(fresh){
+      histR.push(s.R);histC.push(s.C);
+      histShift.push(lastShifts!==null&&s.shifts>lastShifts);
+      lastShifts=s.shifts;
+      if(histR.length>TSW){histR.shift();histC.shift();histShift.shift();}
+      drawTs();
+    }
+    if(s.t===lastT){staleCount++;}else{staleCount=0;lastT=s.t;}
+    document.getElementById('stale').style.display=staleCount>20?'inline':'none';
+    document.getElementById('clock').textContent=
+      't '+Math.floor(s.t/60)+':'+String(Math.floor(s.t)%60).padStart(2,'0');
+    bar('rFill','rVal',s.R);bar('cFill','cVal',s.C);
+    document.getElementById('camps').textContent='陣営 '+s.camps;
+    document.getElementById('shifts').textContent='転換 '+s.shifts+'回';
+    document.getElementById('hi').textContent=
+      s.hi>0?('斉一化 '+s.hi.toFixed(0)+'s/8s'):'';
+    document.getElementById('log').textContent=(s.events||[]).join('\n');
+    draw(s);
+  }catch(e){
+    staleCount++;
+    document.getElementById('stale').style.display=staleCount>20?'inline':'none';
+  }
+}
+loadRobots().then(()=>setInterval(tick,100));
+</script>
+</body>
+</html>

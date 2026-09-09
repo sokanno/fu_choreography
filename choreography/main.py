@@ -23,9 +23,56 @@ import struct
 import threading
 import queue
 
+# ── 陣取りモード: territory/ のシミュレーション+音響クライアント ──
+import os, sys
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "territory"))
+try:
+    from territory_test_sender import Territory as TerritoryModel, pitch_class as terr_pitch_class
+    from territory_client import TerritoryClient
+    TERRITORY_AVAILABLE = True
+except Exception as _e:
+    print(f"[territory] import失敗（陣取りモードは無効）: {_e}")
+    TERRITORY_AVAILABLE = False
+
 #=========================================================
 # ここはどこか
-place = "venue"  # "venue" or else
+place = "home"  # "venue" or else  ※会場では "venue" に戻す (2026-08-18 自宅テストのためlocalhostへ)
+
+# ロボット配置: "nmw" = New Media Week (25台, 1mライン5本, node_nmw.csv)
+#              "fu"  = 従来の29台配置 (node.csv)
+# ※ rain/ と territory/ の robots.json も同じ配置にすること (choreography/gen_robots_json.py で再生成)
+layout = "nmw"
+node_file = {"nmw": "node_nmw.csv", "fu": "node.csv"}[layout]
+
+# 会場の高さ (2026-09-09): 振付はコモネ(天高3.0m, 最高設定2.8m)基準で書かれている。
+#   venue_top   … その会場でロボットが上がる最高高さ [m] (= maxZ)
+#   z_anchor    … これ以下は「人基準の高さ」としてそのまま (向き合う 1.8–1.95, 鬼 1.8, 陣取り 1.9, The two of us 2.0 …)
+#                 これより上は venue_top まで線形に引き伸ばして広いヘッドスペースを使い切る
+#   cable_length_m … ケーブル長が分かれば設定 (None なら minZ=0.0 のまま)
+VENUES = {
+    # room = 部屋の床/天井サイズ (x, y) [m] (3D表示)。audience_area = 観客(シミュレーション/センサー)が動く範囲 (None なら従来どおりロボット配置の広さ)
+    "fu":  dict(ceiling=3.0, top=2.8, cable_length_m=None, room=(6.4, 7.6), audience_area=None),   # コモネ
+    "nmw": dict(ceiling=4.5, top=4.3, cable_length_m=None, room=(7.0, 6.0), audience_area=(7.0, 6.0)),   # New Media Week (吊元 4.5m, カーテンで奥行き(ライン方向x)7m × 横幅(観客から見た左右y)6m)
+}
+venue = VENUES[layout]
+design_top = 2.8   # 振付の設計基準 (コモネの最高高さ)。変更しないこと
+z_anchor   = 2.0
+z_scale    = (venue["top"] - z_anchor) / (design_top - z_anchor)   # fu: 1.0, nmw: 2.875
+
+def vz(h):
+    """コモネ基準の高さ [m] → この会場の高さ [m]。z_anchor 以下はそのまま、上は venue_top まで引き伸ばす。"""
+    return h if h <= z_anchor else z_anchor + (h - z_anchor) * z_scale
+
+def vdz(d):
+    """z_anchor より上で使う振幅・スパン [m] のスケール。"""
+    return d * z_scale
+
+# ロボットへ送る高さ(mm)のオフセット。ファームウェアが天井高2.8m固定の絶対高さで解釈している場合は
+# venue["top"] - design_top (nmw: 1.5) を入れる。ファームが会場の天井高を知っているなら 0.0。
+robot_z_offset_m = 0.0
+
+# ウィンチの最大上下速度 [m/s] (2026-09-09 実測値 200 mm/s)。周期運動の振幅×角速度がこれを超えないように使う
+winch_max_speed_mps = 0.2
 #=========================================================
 
 # SuperCollider サーバーのホストとポート
@@ -55,7 +102,8 @@ manual_global = {}    # 空の辞書で初期化（Noneではなく）
 
 separationFactor = 0.14
 cohesionFactor   = 1.76
-rotationSpeed    = 0.001
+rotationSpeed    = 0.0        # 3Dカメラの周回速度。0で視点固定 (2026-09-09 停止)。回すなら 0.001
+cameraAngle      = 0.0        # 固定視点の方位 (rad)。0 = 配置図の右側(PC側)から見る = gen_node_nmw.py の FRONT="right"。left→math.pi, bottom→-math.pi/2, top→math.pi/2
 radius           = 5.5
 cameraHeight     = 1.0
 
@@ -63,7 +111,7 @@ noiseScale   = 0.01
 noiseSpeed   = 0.01
 waveScale    = 0.2
 waveStrength = 0.1
-flow_target_height = 2.5
+flow_target_height = vz(2.5)
 
 showPole = True
 
@@ -99,8 +147,9 @@ base_sat   = 1.0   # ← 追加：彩度のデフォルト
 # ========================================================
 # 定数
 # ========================================================
-ROWS, COLS     = 7, 7
-minZ, maxZ     = 0.0, 2.8 # 0.0, 2.8
+ROWS, COLS     = (5, 5) if layout == "nmw" else (7, 7)   # 格子隣接(boids用)の行列数
+maxZ = venue["top"]                       # 会場の最高高さ (fu 2.8 / nmw 4.3)
+minZ = max(0.0, venue["ceiling"] - venue["cable_length_m"]) if venue["cable_length_m"] else 0.0
 sepDist        = 0.4
 agent_length   = 0.30
 agent_radius   = 0.075/2
@@ -162,7 +211,7 @@ oni_min_select_dist  = 2.5    # 降下候補最小距離
 oni_max_select_dist  = 4.0    # 降下候補最大距離
 oni_descent_speed    = 0.2    # 降下速度[m/s]
 oni_return_speed     = 1.0    # 緊急上昇速度[m/s]
-oni_target_z         = 1.8    # 降下目標Z[m]
+oni_target_z         = vz(1.8) # 降下目標Z[m] (人基準、会場で変えない)
 
 # ステートマシン用
 oni_state            = "idle" # "idle","descending","waiting","ascending"
@@ -196,6 +245,24 @@ SOUND_TURN_TIME     = 0.5   # ← ★ 完全に振り向くまでに使える時
 
 # ==== Fish‑school mode params ====
 fish_align_factor  = 0.5    # 向きそろえ強度
+# 群全体の平均高さのゆらぎ (2026-09-09, NMW): 基準高さの上に 0〜fish_school_drift_range [m] を Perlin ノイズで上乗せ
+# → 群の動く範囲が上方向に +1m 広がり、平均高さがゆっくり上下する。コモネは 0 で従来どおり
+fish_school_drift_range = 0.0 if layout == "fu" else 1.0   # [m]
+fish_base_no_person_nmw = 2.5   # NMW の魚群の基準高さ [m] (人検出なし。帯 = 基準-0.4 〜 基準+1.0+0.4 = 2.1〜3.9m)
+# 天上天下: 位相速度 [rad/s] (すれ違い間隔 = π/速度)。NMW は振幅が大きいので遅め (2026-09-09)
+# 回る天井: 夕焼けで赤くなる側。+1 = +x 端 (コモネ従来)、-1 = -x 端 (NMW では観客から見て奥、2026-09-09)
+sunset_x_sign = 1.0 if layout == "fu" else -1.0
+# 回る天井: 面の回転速度の倍率。NMW は高低差が vdz で約2.9倍になり各筒の上下が速く見えるので半分に (2026-09-09)
+plane_rot_speed_scale = 1.0 if layout == "fu" else 0.5
+# 回る天井: True なら面が上限 maxZ を超える分だけ面全体を下げ、上側が平らに並ぶのを避ける (コモネは高さ制限ゆえ従来どおりクリップ)
+plane_keep_below_top = (layout != "fu")
+plane_spread_amp = 0.0   # 回る天井の面の高低差の半分 [m] (毎フレーム更新、角速度の制限に使う)
+plane_min_z = minZ if layout == "fu" else 2.0   # 回る天井の一番低い筒の下限 [m] (NMW: 2.0、ユーザー指定 2026-09-09)
+tenge_speed_init  = 0.7 if layout == "fu" else 0.4          # 初期値 (fu 4.5 s / nmw 7.9 s 間隔)
+tenge_speed_range = (0.5, 0.8) if layout == "fu" else (0.3, 0.5)   # すれ違いごとの再抽選範囲 (fu 3.9–6.3 s / nmw 6.3–10.5 s)
+fish_base_no_person = vz(2.0) if layout == "fu" else fish_base_no_person_nmw   # 人がいない時の基準高さ
+fish_drift_offset = 37.0   # ゆらぎノイズの時間オフセット (モード開始時に「高いところ」から始まるよう選び直す)
+fish_school_drift_speed = 0.04                              # ノイズの時間スケール (小さいほどゆっくり、0.04 ≈ 20–30 s 周期)
 fish_sep_dist      = 0.35   # 距離しきい値
 fish_coh_factor    = 1.2    # 群れへの吸引
 fin_osc_amp_deg    = 4.0    # 尾びれ振幅 (deg)
@@ -243,7 +310,7 @@ butterfly_path_noise_speed = 0.2
 butterfly_state = "flying"
 
 # ★飛行時の筒の基準高さ
-butterfly_base_z_flying = 2.3        # flying時の基準高さ
+butterfly_base_z_flying = vz(2.3)    # flying時の基準高さ
 
 # 花に止まる時のパラメータ
 butterfly_rest_interval_min = 20.0
@@ -261,8 +328,8 @@ butterfly_z_influence_strength_flying = 0.5   # ★少し控えめに（基準�
 butterfly_z_influence_strength_resting = 1.2
 butterfly_funnel_radius = 5.0                 # 影響を受ける最大半径
 butterfly_funnel_inner_radius = 1.0           # ★内側の半径（ここまでは最低点）
-butterfly_funnel_min_z = 2.0                  # ★最低点（半径1m以内）- 休憩中
-butterfly_funnel_max_z = 2.4                  # ★最高点（遠いところ）
+butterfly_funnel_min_z = vz(2.0)              # ★最低点（半径1m以内）- 休憩中
+butterfly_funnel_max_z = vz(2.4)              # ★最高点（遠いところ）
 
 # 色パラメータ
 butterfly_color_near = vector(1.0, 0.4, 0.6)
@@ -284,20 +351,49 @@ detect_radius_butterfly = 0.0
 # ========================================================
 # The two of us モード用パラメータ
 # ========================================================
-twofus_descend_speed    = 0.8    # 降下速度 [m/s]
-twofus_target_z         = 2.0    # アクティブ筒の目標高さ [m]
-twofus_bob_min          = 1.8    # 上下動の下限 [m]
-twofus_bob_max          = 2.2    # 上下動の上限 [m]
+# 降下: コモネは従来どおり一直線 0.8 m/s。NMW は空間が広いのでゆっくり降りながら上下に揺れる (2026-09-09)
+# ウィンチ 0.2 m/s のスルー制限下で調整 (2026-09-09): NMW は 4.3→2.0 m を約 22 s、途中で合計 0.2 m ほど戻り上がる
+twofus_descend_speed    = 0.8 if layout == "fu" else winch_max_speed_mps   # 降下速度 [m/s] (NMW: まっすぐ 0.2 m/s、2.3 m を約 12 s)
+twofus_descend_bob_amp  = 0.0                                # 降下中の上下ゆらぎ振幅 [m] (0 で一直線。ユーザー判断 2026-09-09: 降下は揺らさない)
+twofus_descend_bob_hz   = 0.12                               # ゆらぎの基本周波数 [Hz]
+twofus_target_z         = vz(2.0) # アクティブ筒の目標高さ [m]
+twofus_bob_min          = vz(1.8) # 上下動の下限 [m]
+twofus_bob_max          = 2.2     # 上下動の上限 [m] (人基準なので会場で変えない。vz(2.2)=2.58 にすると到着判定 2.05 に届かず降下フェーズで詰まる)
 twofus_mob_z            = maxZ   # モブの高さ（天井）
 twofus_interaction_dur_min = 4.0   # 交信の最短時間 [s]
 twofus_interaction_dur_max = 12.0  # 交信の最長時間 [s]
 twofus_action_dur_min   = 1.5    # 1アクションの最短持続 [s]
 twofus_action_dur_max   = 4.0    # 1アクションの最長持続 [s]
-twofus_return_speed_min = 0.3    # 帰還速度の最小 [m/s]（名残惜しい）
-twofus_return_speed_max = 2.0    # 帰還速度の最大 [m/s]（怒っている）
+# 帰還速度: NMW はウィンチ上限 0.2 m/s の範囲で「名残惜しい〜怒っている」の差を残す
+twofus_return_speed_min = 0.3 if layout == "fu" else 0.12   # 帰還速度の最小 [m/s]（名残惜しい。NMW 2.3 m を約 19 s）
+twofus_return_speed_max = 2.0 if layout == "fu" else winch_max_speed_mps   # 帰還速度の最大 [m/s]（怒っている）
 twofus_blink_fast_freq  = 6.0    # 速い点滅の周波数 [Hz]
 twofus_blink_slow_freq  = 0.5    # 遅い点滅の周波数 [Hz]
 twofus_farewell_dur     = 3.0    # 別れの演出時間 [s]
+twofus_gather_timeout   = 30.0   # モード開始時に全員が天井に揃うのを待つ上限 [s] (0.2 m/s なら 2.3 m で約 12 s)
+# 帰還の「戸惑い」: 確率で 1〜2 回、少し下がって(相手の方へ戻りかけて)から上り直す。残りはまっすぐ帰る (ミックス)
+twofus_hesitate_prob    = 0.5    # 戸惑いながら帰る確率
+twofus_hesitate_dip_m   = (0.15, 0.35)   # 1 回の戻り下がり量 [m] の範囲
+twofus_hesitate_pause_s = (0.8, 2.0)     # 下がった後に止まる時間 [s] の範囲
+
+def twofus_descend_step(ag, floor_z, t, dt):
+    """降下1ステップ。名目の高さ ag.twofus_desc_nom を twofus_descend_speed で下げ、その上に
+    正弦+Perlinノイズの上下ゆらぎ (twofus_descend_bob_amp) を重ねる。ゆらぎは降下の始点・終点で
+    0 に絞る (0.4 m のランプ) ので floor_z には必ず着く。状態は降下以外の枝で None に戻すこと。"""
+    if getattr(ag, "twofus_desc_nom", None) is None:
+        ag.twofus_desc_nom = ag.z
+        ag.twofus_desc_start = ag.z
+        ag.twofus_desc_t0 = t
+        ag.twofus_desc_off = random.uniform(0.0, 100.0)
+    ag.twofus_desc_nom = max(floor_z, ag.twofus_desc_nom - twofus_descend_speed * dt)
+    nom = ag.twofus_desc_nom
+    ramp = 0.4
+    env = min(1.0, (ag.twofus_desc_start - nom) / ramp) * min(1.0, (nom - floor_z) / ramp)
+    env = max(0.0, env)
+    tt = t - ag.twofus_desc_t0 + ag.twofus_desc_off
+    bob = (math.sin(2 * math.pi * twofus_descend_bob_hz * tt) * 0.6
+           + pnoise1(tt * 0.7 + ag.twofus_desc_off) * 0.8)
+    return max(floor_z, min(maxZ, nom + twofus_descend_bob_amp * env * bob))
 
 # ========================================================
 # ホタルモード用パラメータ（グローバル）
@@ -332,8 +428,14 @@ firefly_turn_duration = 1.5         # 方向転換にかける時間[秒]
 firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きいほど滑らか）
 
 # 高さ動作パラメータ
-firefly_z_base = 2.3              # 基準高さ（範囲：約2.0m〜2.6m）
-firefly_z_amplitude = 0.15        # 高さの振幅（ハードウェア速度制約で控えめに）
+# 待機高さ: NMW では同期するほど下がってくる (色が青→緑になるほど低く、2026-09-09 ユーザー要望)。コモネは従来の固定 2.3
+firefly_z_base_unsynced = vz(2.3) if layout == "fu" else 3.4   # 位相がずれている(青い)時の待機高さ [m]
+firefly_z_base_synced   = vz(2.3) if layout == "fu" else 2.4   # 揃っている(緑の)時の待機高さ [m] (最低)
+firefly_z_base_smooth   = 0.5     # 待機高さの追従時定数 [s] (位相偏差のブレを平滑化)
+firefly_z_base = firefly_z_base_unsynced   # トランジション先 (モード開始時の高さ)
+# 高さの振幅: 上下は発光位相(周期 4 s ±20%)に同期するので、振幅/2 × 2π/3.2 s ≤ ウィンチ 0.2 m/s → 振幅 ≤ 0.20 m。
+# vdz(0.15)=0.43 m は 0.34 m/s で超過していたため NMW は 0.20 に (2026-09-09)。コモネは従来の 0.15
+firefly_z_amplitude = 0.15 if layout == "fu" else min(vdz(0.15), winch_max_speed_mps * (firefly_base_period * (1 - firefly_period_variance)) / math.pi)   # 高さの振幅（ハードウェア速度制約で控えめに）
 firefly_z_period = 8.0            # 高さ変動の周期[秒]
 firefly_z_noise_scale = 0.5       # 高さのノイズスケール
 
@@ -393,14 +495,23 @@ def is_node_alive(node_id):
 
 mqtt_client.on_message = _on_mqtt_message
 
-if place == "venue":
-    mqtt_client.connect("192.168.1.2", 1883, 60)
+# ブローカー接続: venue優先→ローカルにフォールバック。どちらも無ければ
+# シミュレーションのみで続行(publishは黙って捨てられる)
+_mqtt_hosts = ["192.168.1.2", "127.0.0.1"] if place == "venue" else ["127.0.0.1"]
+MQTT_CONNECTED = False
+for _h in _mqtt_hosts:
+    try:
+        mqtt_client.connect(_h, 1883, 60)
+        MQTT_CONNECTED = True
+        print(f"[MQTT] connected to {_h}")
+        break
+    except OSError as _e:
+        print(f"[MQTT] {_h} に接続できず: {_e}")
+if MQTT_CONNECTED:
+    mqtt_client.subscribe("fu/device/+/heartbeat", 0)
+    mqtt_client.loop_start()
 else:
-    mqtt_client.connect("127.0.0.1", 1883, 60)
-    # mqtt_client.connect("10.0.1.218", 1883, 60)
-
-mqtt_client.subscribe("fu/device/+/heartbeat", 0)
-mqtt_client.loop_start()
+    print("[MQTT] ブローカーなしで続行(シミュレーションのみ)")
 print(f"[Heartbeat] fu/device/+/heartbeat を監視開始 (timeout={heartbeat_timeout}s)")
 
 # ========================================================
@@ -439,13 +550,13 @@ scene2d.lights = []
 # → 先にダミーで作成しておき、後でサイズと位置を調整します
 floor = box(canvas=scene3d,
             pos=vector(0,0,-0.01),
-            size=vector(6.4,7.6,0.02),
+            size=vector(venue["room"][0], venue["room"][1], 0.02),
             color=color.gray(0.5),
             opacity=1.0)
 
 ceiling = box(canvas=scene3d,
             pos=vector(0,0, maxZ + 0.21),
-            size=vector(6.4,7.6,0.02),
+            size=vector(venue["room"][0], venue["room"][1], 0.02),
             color=color.gray(0.5),
             opacity=1.0,
             shininess=0)
@@ -506,7 +617,8 @@ modes = ["マニュアルモード",
          "向き合うモード",
          "ホタルモード",
          "The two of us",
-         "見えない蝶々モード"]
+         "見えない蝶々モード",
+         "陣取りモード"]
         #  "舞台挨拶モード"]
 mode_menu = menu(
     choices=modes,
@@ -814,9 +926,9 @@ class Agent:
 
         # 4) グループごとの高さレンジを設定
         if self.group == "A":
-            min_h, max_h = 1.5, maxZ
+            min_h, max_h = vz(1.5), maxZ
         else:
-            min_h, max_h = 2.0, maxZ
+            min_h, max_h = vz(2.0), maxZ
 
         # 5) 中央と振幅を計算して z を更新
         mid_h = (min_h + max_h) / 2
@@ -1379,7 +1491,7 @@ class Audience:
 # Agent 作成＋隣接設定
 # ========================================================
 agents = []
-with open("node.csv", newline="") as f:
+with open(node_file, newline="") as f:
     for k, row in enumerate(csv.DictReader(f)):
         i, j = divmod(k, COLS)
         z = random.uniform(minZ + agent_length/2, maxZ - agent_length/2)
@@ -1393,7 +1505,7 @@ for ag in agents:
     i, j = ag.i, ag.j
     nbrs = [(i-1,j), (i+1,j), (i,j-1), (i,j+1)]
     nbrs += ([(i-1,j-1),(i+1,j-1)] if i%2==0 else [(i-1,j+1),(i+1,j+1)])
-    ag.neighbors = [ni*COLS + nj for ni,nj in nbrs]
+    ag.neighbors = [ni*COLS + nj for ni,nj in nbrs if 0 <= nj < COLS]  # 列の端で隣の行に回り込まない
 
 
 # ========================================================
@@ -1403,6 +1515,9 @@ minX, maxX = min(a.x for a in agents), max(a.x for a in agents)
 minY, maxY = min(a.y for a in agents), max(a.y for a in agents)
 centerX, centerY = (minX+maxX)/2, (minY+maxY)/2
 span = max(maxX-minX, maxY-minY)
+agent_max_r = max(math.hypot(a.x - centerX, a.y - centerY) for a in agents)   # 中心から一番遠いロボットまでの距離 [m]
+# 観客が動ける範囲 (会場設定があればそれ、なければロボット配置の広さ)
+aud_span_x, aud_span_y = venue["audience_area"] or (span, span)
 
 scene3d.center = vector(centerX, centerY, (minZ+maxZ)/2)
 scene2d.center = vector(centerX, centerY, 0)
@@ -1410,8 +1525,8 @@ scene2d.range  = span * 0.4
 
 # カメラ中心＆2Dビュー調整のあと
 # Audience の初期化
-x_range = (centerX - span/2, centerX + span/2)
-y_range = (centerY - span/2, centerY + span/2)
+x_range = (centerX - aud_span_x/2, centerX + aud_span_x/2)
+y_range = (centerY - aud_span_y/2, centerY + aud_span_y/2)
 audiences = []  # 最初は空
 
 
@@ -1434,8 +1549,8 @@ def handle_audience(coords_list: list[tuple[float, float]]):
     # (A) 人数合わせ
     n_recv, n_curr = len(coords_list), len(sensor_people)
     if n_recv > n_curr:                      # 追加生成
-        x_range = (centerX - span/2, centerX + span/2)
-        y_range = (centerY - span/2, centerY + span/2)
+        x_range = (centerX - aud_span_x/2, centerX + aud_span_x/2)
+        y_range = (centerY - aud_span_y/2, centerY + aud_span_y/2)
         for _ in range(n_recv - n_curr):
             sensor_people.append(
                 Audience(scene3d, scene2d,
@@ -1652,7 +1767,7 @@ def send_robot_data(agent):
     """
     # ---- MQTT 出力 ----
     # 位置・向き
-    z_m = max(minZ, min(maxZ, agent.z))
+    z_m = max(minZ, min(maxZ, agent.z)) - robot_z_offset_m   # robot_z_offset_m: ファーム側の天井高前提の差分
     yaw_deg = (agent.yaw % 360.0 + 360.0) % 360.0  # 0–360
     # Pitch: 向き合うモード（autonomous_mode=True）なら90度を送信
     if agent.autonomous_mode:
@@ -1660,7 +1775,7 @@ def send_robot_data(agent):
     else:
         pitch_deg = max(-60.0, min(60.0, agent.pitch))
 
-    mm = int(z_m * 1000 + 0.5)  # 0–2800 → uint16_t
+    mm = int(max(0.0, z_m) * 1000 + 0.5)  # 0–2800 (コモネ) / 0–4300 (NMW) → uint16_t
     pitchC = int(pitch_deg * 100 + 0.5)  # -6000〜+6000 or 9000 → int16_t
     yawC = int(yaw_deg * 100 + 0.5)  # 0–35999 → uint16_t
 
@@ -1990,14 +2105,21 @@ print(">>> [main] about to call start_osc_listener()")
 start_osc_listener(ip="0.0.0.0", port=8000)
 print(">>> [main] returned from start_osc_listener()")
 
-# mqtt起動
-if place == "venue":
-    client = start(broker_host="192.168.1.2", broker_port=1883)
-else:
-    client = start(broker_host="localhost", broker_port=1883)
+# mqtt起動: venue優先→ローカルにフォールバック(どちらも無ければセンサー無しで続行)
+client = None
+for _h in (["192.168.1.2", "localhost"] if place == "venue" else ["localhost"]):
+    try:
+        client = start(broker_host=_h, broker_port=1883)
+        print(f"[mqtt_listener] connected to {_h}")
+        break
+    except OSError as _e:
+        print(f"[mqtt_listener] {_h} に接続できず: {_e}")
+if client is None:
+    print("[mqtt_listener] ブローカーなしで続行(センサー入力なし)")
 
 
-sim_time = noise_time = angle = 0.0
+sim_time = noise_time = 0.0
+angle = cameraAngle   # 3Dカメラ方位 (rotationSpeed=0 なら固定)
 dt = 1/20
 # 生存ノードから初期Group Aを選択（起動直後はheartbeat未着のためfallback）
 _alive_init = [i for i, ag in enumerate(agents) if is_node_alive(ag.node_id)]
@@ -2020,7 +2142,10 @@ while True:
     sim_time   += dt
     noise_time += noiseSpeed
     angle      += rotationSpeed
-    plane_angle += plane_rot_speed * dt   # ← 平面回転角を更新（連続回転）
+    _plane_w = plane_rot_speed * plane_rot_speed_scale
+    if plane_spread_amp > 0.0:   # 面の高低差の半分 × 角速度 = 各筒の上下速度ピーク ≤ ウィンチ最大速度
+        _plane_w = min(_plane_w, winch_max_speed_mps / plane_spread_amp)
+    plane_angle += _plane_w * dt   # ← 平面回転角を更新（連続回転）
 
     # MaxからのOSCメッセージを更新
     separationFactor     = params["separation"]
@@ -2037,7 +2162,7 @@ while True:
     color_speed          = params["color_speed"]
     # tilt_angle_deg       = params["tilt_angle_deg"]
     plane_rot_speed      = params["rotation_speed"]
-    plane_height         = params["plane_height"]
+    plane_height         = vz(params["plane_height"])
     audience_count       = int(params["audience_count"])
     audience_speed_amp   = params["audience_movement"]
     detect_radius        = params["detect_radius"]
@@ -2057,7 +2182,7 @@ while True:
     rare_factor = params["rare_factor"]
     # 回る天井
     tilt_angle_deg = params["tilt_angle_deg"]
-    plane_height = params["plane_height"]
+    plane_height = vz(params["plane_height"])
     # 天上天下モード
     min_height = params["min_height"]
     center_z = params["center_z"]
@@ -2104,8 +2229,8 @@ while True:
         audiences.clear()
 
         # ② 新しい人数分だけ生成（ランダム歩行用）
-        x_range = (centerX - span/2, centerX + span/2)
-        y_range = (centerY - span/2, centerY + span/2)
+        x_range = (centerX - aud_span_x/2, centerX + aud_span_x/2)
+        y_range = (centerY - aud_span_y/2, centerY + aud_span_y/2)
         audiences = [
             Audience(
                 scene3d, scene2d, x_range, y_range,
@@ -2267,11 +2392,28 @@ while True:
                         n0.x*sa + n0.y*ca,
                         n0.z).norm()
 
-        # 2) 平面上 Z のリストを先に作る
+        # 2) 面の高低差と中心高さを「回転角に依存しない」解析値で決める
+        #    (格子の実測 max/min を使うと角のロボットの出入りで脈動し、回転がカクつく)
+        #    傾き a の面: 中心からの距離 r の点の高低差 = tan(a)*r。ヘッドスペースに合わせて vdz で拡大。
+        plane_slope = vdz(math.tan(a))                     # 1 m あたりの高低差
+        plane_amp = plane_slope * agent_max_r              # 一番遠いロボットでの高低差 (= 面の振幅)
+        plane_center = plane_height
+        plane_k = 1.0
+        if plane_keep_below_top:
+            # 面全体を [plane_min_z, maxZ] に収める (NMW): 振幅が帯より大きければ縮め、中心を帯の中に寄せる。
+            # どちらも傾き・UI 高さだけで決まる定数なので回転は滑らかなまま
+            lo, hi = plane_min_z, maxZ
+            if plane_amp > (hi - lo) / 2.0:
+                plane_k = (hi - lo) / 2.0 / plane_amp
+                plane_amp = (hi - lo) / 2.0
+            plane_center = min(hi - plane_amp, max(lo + plane_amp, plane_center))
+        plane_spread_amp = plane_amp                       # 角速度の制限 (ウィンチ速度) に使う
+
+        # 3) 平面上 Z のリスト (面の向き = normal の水平成分方向へ下がる)
         plane_zs = []
         for ag in agents:
             dx, dy = ag.x - centerX, ag.y - centerY
-            z_p = plane_height - (normal.x*dx + normal.y*dy) / normal.z
+            z_p = plane_center - plane_k * vdz((normal.x*dx + normal.y*dy) / normal.z)
             plane_zs.append(min(max(minZ, z_p), maxZ))
         minZp, maxZp = min(plane_zs), max(plane_zs)
 
@@ -2351,10 +2493,11 @@ while True:
             else:
                 # 観客がいない場合：自転ステップ回転
 
-                # pitchはuphill方向に追従（従来通り）
-                g_dot_n = -normal.z
-                uphill = (g_dot_n*normal - vector(0,0,-1)).norm()
-                target_pitch = degrees(asin(uphill.z))
+                # pitchは面の傾きに追従。面の高低差は vdz / plane_k で拡大・縮小しているので、
+                # UI の傾き角ではなく「実際に筒が並んでいる面」の傾き atan(plane_k*plane_slope) を使う
+                # (以前は asin(uphill.z)=UI角のままで、NMW では面より寝た角度になり揃って見えなかった。2026-09-09)
+                target_pitch = degrees(math.atan(plane_k * abs(plane_slope)))
+                target_pitch = max(-60, min(60, target_pitch))
 
                 if in_transition:
                     k = min(1.0, ease_speed * dt * eased_progress)
@@ -2584,8 +2727,8 @@ while True:
                 else:
                     sunset_time_t = 1.0 - (day_time - 0.72) / 0.13
                 sunset_time_t = max(0.0, min(1.0, sunset_time_t))
-                # x座標によるグラデーション（右ほど強い: x=0で0, x=1.8で1.0）
-                sunset_x_t = max(0.0, ag.x / 1.8)
+                # x座標によるグラデーション（sunset_x_sign 側の端ほど強い: 中心で0, 配置の端で1.0）
+                sunset_x_t = max(0.0, sunset_x_sign * (ag.x - centerX) / max(0.1, (maxX - minX) / 2))
                 sunset_strength = sunset_time_t * sunset_x_t * 0.9  # 最大90%ブレンド
                 # 夕焼け色（暖かいオレンジ〜赤）
                 sunset_r, sunset_g, sunset_b = 0.95, 0.25, 0.05
@@ -2752,7 +2895,7 @@ while True:
             
             # 初期パラメータ設定
             mode_menu.tenge_amplitude = 0.20  # 初期振幅
-            mode_menu.tenge_speed = 0.7  # ラジアン/秒
+            mode_menu.tenge_speed = tenge_speed_init  # ラジアン/秒
             
             # ★Group B明度管理用の初期化
             mode_menu.groupb_brightness_start_time = sim_time
@@ -2812,8 +2955,8 @@ while True:
         # ─────────────────────────────────────────────
         # max_height = 2.2  # 物理的制約により固定
         # min_height = 1.0  # 人がいない場合の最低高さ
-        max_height = 2.75  # 物理的制約により固定
-        min_height = 1.85  # 人がいない場合の最低高さ
+        max_height = vz(2.75)  # 物理的制約により固定 (コモネ基準)
+        min_height = vz(1.85)  # 人がいない場合の最低高さ
         center_z = (max_height + min_height) / 2  # 中間点を動的に計算
         # 人がいるかどうかを確認
         people_detected = len(audiences) > 0
@@ -2904,16 +3047,31 @@ while True:
         # 3) すれ違い検出（トランジション完了後のみ）
         # ─────────────────────────────────────────────
         crossing = False
-        if not in_transition:
+        if in_transition:
+            mode_menu.tenge_prev_phase_mod = None
+        else:
             phase_a = agents[current_groupA_idx].tenge_phase
             phase_mod = phase_a % (2 * math.pi)
-            
-            # π/2付近または3π/2付近
-            if (1.4 < phase_mod < 1.7) or (4.6 < phase_mod < 4.8):
-                if not hasattr(mode_menu, 'last_crossing_phase') or abs(phase_a - mode_menu.last_crossing_phase) > 1.0:
-                    crossing = True
-                    mode_menu.last_crossing_phase = phase_a
-            
+
+            # π/2 または 3π/2 を「またいだ」フレームだけ発火 (旧: 1.4<φ<1.7 の窓 → π/2 の 0.17 rad 手前で発火し、
+            # cos≠0 のまま Group A 交代+振幅再抽選 → 高さが最大 0.4 m 飛ぶ「ワープ」の原因だった。2026-09-09)
+            _prev = getattr(mode_menu, 'tenge_prev_phase_mod', None)
+            _snap = None
+            if _prev is not None:
+                for _target in (math.pi / 2, 3 * math.pi / 2):
+                    if _prev < _target <= phase_mod:
+                        _snap = _target
+            mode_menu.tenge_prev_phase_mod = phase_mod
+            if _snap is not None:
+                crossing = True
+                # 位相を正確に π/2 (3π/2) に揃える → cos=0、全員が中間点にいる状態で切り替えるので高さは連続
+                _base = phase_a - phase_mod
+                for ag in agents:
+                    ag.tenge_phase = _base + _snap
+                phase_a = _base + _snap
+                mode_menu.tenge_prev_phase_mod = _snap
+                mode_menu.last_crossing_phase = phase_a
+
             if crossing:
                 # すれ違い時刻を記録（Group Bの向き制御用）
                 mode_menu.last_crossing_time = sim_time
@@ -2962,7 +3120,9 @@ while True:
                 # ★天上天下モードのパラメータ、振幅と速度をランダムに設定
                 # mode_menu.tenge_amplitude = random.uniform(0.05, 0.25)
                 mode_menu.tenge_amplitude = random.uniform(0.05, max_height - center_z)
-                mode_menu.tenge_speed = random.uniform(0.5, 0.8)
+                # 上下速度のピーク (振幅×角速度) がウィンチ最大速度を超えないよう角速度を制限: 大きく振れる時ほどゆっくり
+                mode_menu.tenge_speed = min(random.uniform(*tenge_speed_range),
+                                            winch_max_speed_mps / max(0.05, mode_menu.tenge_amplitude))
                 
                 # crossing が True なら新しい Group A が決まった直後
                 if crossing or not hasattr(mode_menu, "groupa_color"):
@@ -3278,6 +3438,9 @@ while True:
             # 魚群モードの初期化とトランジション
             # ========================================================
             detect_radius = detect_radius_fish
+            # 群全体の平均高さのゆらぎ (全筒共通、0〜fish_school_drift_range m)
+            _n = max(-1.0, min(1.0, pnoise1(sim_time * fish_school_drift_speed + fish_drift_offset, octaves=2) / 0.7))
+            fish_school_drift = fish_school_drift_range * (_n + 1.0) / 2.0
             # グローバルなprev_modeの確認（デバッグ用）
             current_prev_mode = getattr(mode_menu, 'global_prev_mode', None)
             
@@ -3287,6 +3450,18 @@ while True:
                 mode_menu.fish_mode_initialized = True
                 mode_menu.fish_transition_start = sim_time
                 mode_menu.fish_transition_duration = 2.0  # 2秒のトランジション
+                # 群のゆらぎを「高いところ」から始める: ノイズの時間オフセットを、今の sim_time で値が最大付近になるよう選ぶ
+                if fish_school_drift_range > 0.0:
+                    _best, _best_v = fish_drift_offset, -9.0
+                    for _k in range(400):
+                        _cand = 37.0 + _k * 0.5
+                        _v = pnoise1(sim_time * fish_school_drift_speed + _cand, octaves=2)
+                        if _v > _best_v:
+                            _best, _best_v = _cand, _v
+                    fish_drift_offset = _best
+                    _n = max(-1.0, min(1.0, _best_v / 0.7))
+                    fish_school_drift = fish_school_drift_range * (_n + 1.0) / 2.0
+                    print(f"[魚群モード] 群のゆらぎ開始値 +{fish_school_drift:.2f} m (基準 {fish_base_no_person:.2f} → {fish_base_no_person + fish_school_drift:.2f} m)")
                 
                 # 各エージェントの開始状態を保存
                 for ag in agents:
@@ -3306,7 +3481,7 @@ while True:
                     # 目標値を設定
                     # ag.fish_target_z = 2.7  # 基準高さ
                     # ag.fish_target_z = 1.0  # 基準高さ
-                    ag.fish_target_z = 2.0  # 基準高さ
+                    ag.fish_target_z = fish_base_no_person + fish_school_drift  # 基準高さ + 群のゆらぎ (通常時の最初の目標と同じにして段差をなくす)
 
                     ag.fish_target_pitch = 0.0  # 水平
                     ag.fish_target_color = vector(0.0, 0.7, 0.8)  # 青緑系の初期色
@@ -3442,8 +3617,9 @@ while True:
 
 
                 # base_height_with_person = 1.0
-                base_height_with_person = 2.5
-                base_height_without_person = 2.0
+                base_height_with_person = vz(2.5)
+                # NMW は人検出なし: 手の届かない高さにキープ (基準 2.5 → 帯 2.1〜3.9m)。コモネは従来どおり 2.0
+                base_height_without_person = fish_base_no_person
 
                 # 各観客からの影響を計算
                 amplitude_factor = 1.0
@@ -3479,6 +3655,7 @@ while True:
 
                 # 基準高さを計算（既存のロジックそのまま）
                 current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1.0 - height_factor)
+                current_base_height += fish_school_drift   # 群全体のゆらぎ (上方向に 0〜+1m)
 
                 # 目標のZ座標（波動を含む最終位置）
                 target_z_with_wave = current_base_height + z_wave * wave_amplitude
@@ -3503,8 +3680,8 @@ while True:
                     initial_wave = getattr(ag, 'fish_initial_wave', 0.0)
                     interpolated_wave = initial_wave + (z_wave - initial_wave) * wave_eased
                     
-                    # 波動効果も徐々に適用
-                    ag.z = ag.fish_target_z + interpolated_wave * wave_amplitude * wave_eased
+                    # 波動効果も徐々に適用 (基準はゆらぎ込みの現在値: ランプ終了時に段差が出ないように)
+                    ag.z = current_base_height + interpolated_wave * wave_amplitude * wave_eased
                 else:
                     # 通常時：完全な波動効果
                     ag.z = target_z_with_wave
@@ -3746,7 +3923,7 @@ while True:
                 
                 # デフォルトの正位置を設定
                 # ag.shimmer_default_z = 1.0  # シマーモードの基準高さ
-                ag.shimmer_default_z = 2.5  # シマーモードの基準高さ
+                ag.shimmer_default_z = vz(2.5)  # シマーモードの基準高さ
                 ag.shimmer_default_pitch = 0.0
                 ag.shimmer_default_color = vector(0.1, 0.1, 0.1)  # 黄色系
                 
@@ -4298,13 +4475,13 @@ while True:
                 
                 # 全員を2.7mへ移動
                 for ag in agents:
-                    ag.z = ag.greeting_start_z + (2.7 - ag.greeting_start_z) * eased_t
+                    ag.z = ag.greeting_start_z + (vz(2.7) - ag.greeting_start_z) * eased_t
                     # 全照灯
                     ag.current_color = vector(0, 0, 0)
             else:
                 # フェーズ完了
                 for ag in agents:
-                    ag.z = 2.7
+                    ag.z = vz(2.7)
                 mode_menu.greeting_phase = "wait_3sec"
                 mode_menu.phase_start_time = current_time
                 print("[舞台挨拶] フェーズ1完了: 全員2.7mに到達")
@@ -4330,14 +4507,14 @@ while True:
                 # ID29のみ下降
                 for ag in agents:
                     if ag.node_id == 29:
-                        ag.z = 2.7 - (2.7 - 2.4) * eased_t
+                        ag.z = vz(2.7) - (vz(2.7) - vz(2.4)) * eased_t
                         # ダウンライトのフェードイン
                         # ag.downlight_brightness = t  # 線形で0→1.0
             else:
                 # フェーズ完了
                 for ag in agents:
                     if ag.node_id == 29:
-                        ag.z = 2.4
+                        ag.z = vz(2.4)
                         ag.downlight_brightness = 1.0
                 mode_menu.greeting_phase = "id29_rotate"
                 mode_menu.phase_start_time = current_time
@@ -4433,14 +4610,14 @@ while True:
                 # ID29のみ上昇
                 for ag in agents:
                     if ag.node_id == 29:
-                        ag.z = 2.4 + (2.7 - 2.4) * eased_t
+                        ag.z = vz(2.4) + (vz(2.7) - vz(2.4)) * eased_t
                         # ダウンライトのフェードアウト（1.0→0.1）
                         ag.downlight_brightness = 1.0 - 0.9 * t
             else:
                 # フェーズ完了
                 for ag in agents:
                     if ag.node_id == 29:
-                        ag.z = 2.7
+                        ag.z = vz(2.7)
                         ag.downlight_brightness = 0.1
                 mode_menu.greeting_phase = "final_wait"
                 mode_menu.phase_start_time = current_time
@@ -4517,7 +4694,7 @@ while True:
             ag.autonomous_mode = True
             ag.pitch = 90.0  # 自律制御の信号
             # ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
-            ag.z = random.uniform(1.8, 1.95)  # 高さをランダムに設定
+            ag.z = random.uniform(vz(1.8), vz(1.95))  # 高さをランダムに設定 (人基準: z_anchor 以下なので会場で変わらない)
             ag.current_color.x = random.uniform(0.8, 0.83)
             ag.current_color.y = random.uniform(0.53, 0.56)
             ag.current_color.z = random.uniform(0.1, 0.13)  # 黄色系の色に設定
@@ -4559,6 +4736,7 @@ while True:
                 ag.firefly_sync_rate = 0.5  # 初期値は中間
                 ag.firefly_isolation = 0.0
                 ag.firefly_phase_deviation = 0.0  # 全体平均位相からの偏差（0=一致, 1=正反対）
+                ag.firefly_z_base_s = firefly_z_base  # 待機高さの平滑値をリセット (再突入時にトランジション先と揃える)
                 
                 # ★ 向き制御用の状態
                 ag.firefly_turning = False           # 方向転換中フラグ
@@ -4883,7 +5061,16 @@ while True:
                     ag.firefly_z_noise_offset + sim_time * firefly_z_noise_scale * 0.1,
                     ag.idx * 0.1
                 )
-                ag.z = firefly_z_base + z_lift * firefly_z_amplitude + z_noise * firefly_z_amplitude * 0.15
+                # 待機高さ: 位相偏差 (0=揃っている/緑 … 1=正反対/青) で synced〜unsynced を補間し、時定数で平滑化
+                _dev = max(0.0, min(1.0, getattr(ag, 'firefly_phase_deviation', 0.5)))
+                _base_target = firefly_z_base_synced + (firefly_z_base_unsynced - firefly_z_base_synced) * _dev
+                if not hasattr(ag, 'firefly_z_base_s'):
+                    ag.firefly_z_base_s = firefly_z_base
+                ag.firefly_z_base_s += (_base_target - ag.firefly_z_base_s) * min(1.0, dt / firefly_z_base_smooth)
+                _z_target = ag.firefly_z_base_s + z_lift * firefly_z_amplitude + z_noise * firefly_z_amplitude * 0.15
+                # 位相シフト(光を見た時の +0.25 や発光時のリセット)で目標が飛ぶので、ウィンチ最大速度でスルー制限
+                _dz_max = winch_max_speed_mps * dt
+                ag.z = ag.z + max(-_dz_max, min(_dz_max, _z_target - ag.z))
                 ag.z = max(minZ, min(maxZ, ag.z))
             
             # ========================================================
@@ -5328,7 +5515,8 @@ while True:
             mode_menu.twofus_active = pair          # [idx_a, idx_b]
             print(f"[The two of us] 生存ノード: {len(alive_indices)}/{len(agents)} "
                   f"(pair: {[agents[i].node_id for i in pair]})")
-            mode_menu.twofus_phase = "descending"   # descending → interacting → swapping
+            mode_menu.twofus_phase = "gathering"    # gathering(全員天井へ) → descending → interacting → farewell → swapping
+            mode_menu.twofus_gather_start = sim_time
             mode_menu.twofus_swap_target = None      # 交代時の新しい相手idx
 
             # 交信タイマー
@@ -5474,10 +5662,19 @@ while True:
         if not in_transition:
             phase = mode_menu.twofus_phase
 
+            # --- gathering: 全員が天井に揃ってから最初の2台が降り始める (2026-09-09) ---
+            if phase == "gathering":
+                _all_up = all(ag.z >= twofus_mob_z - 0.05 for ag in agents)
+                if _all_up or (sim_time - mode_menu.twofus_gather_start) > twofus_gather_timeout:
+                    mode_menu.twofus_phase = "descending"
+                    print(f"[The two of us] 全員天井に集合 ({'完了' if _all_up else 'タイムアウト'}) → 最初の2台が降下開始")
+
             # --- descending: 2台が降りてくる ---
             if phase == "descending":
-                arrived_a = ag_a.z <= twofus_target_z + 0.05
-                arrived_b = ag_b.z <= twofus_target_z + 0.05
+                # 降下の床は上下動の目標 (bob_min〜bob_max+0.1) なので、その範囲に入れば到着とみなす
+                _arrive_z = max(twofus_target_z, twofus_bob_max + 0.1) + 0.05
+                arrived_a = ag_a.z <= _arrive_z
+                arrived_b = ag_b.z <= _arrive_z
                 if arrived_a and arrived_b:
                     mode_menu.twofus_phase = "interacting"
                     mode_menu.twofus_interaction_started = sim_time
@@ -5573,6 +5770,18 @@ while True:
                     mode_menu.twofus_leaving = 0
                     mode_menu.twofus_return_speed = random.uniform(
                         twofus_return_speed_min, twofus_return_speed_max)
+                    # 戸惑い: 帰路の途中(上昇量 0.3〜1.5 m の地点)で 1〜2 回、少し下がって止まる
+                    mode_menu.twofus_return_events = []
+                    if random.random() < twofus_hesitate_prob:
+                        _rise_total = twofus_mob_z - agents[active[0]].z
+                        _n_ev = random.choice([1, 1, 2])
+                        _marks = sorted(random.uniform(0.15, 0.65) * _rise_total for _ in range(_n_ev))
+                        mode_menu.twofus_return_events = [
+                            {"at_rise": m, "dip": random.uniform(*twofus_hesitate_dip_m),
+                             "pause": random.uniform(*twofus_hesitate_pause_s), "state": "pending", "t0": 0.0, "z0": 0.0}
+                            for m in _marks]
+                    mode_menu.twofus_return_start_z = agents[active[0]].z
+                    print(f"[The two of us] 帰還: {'戸惑い×%d' % len(mode_menu.twofus_return_events) if mode_menu.twofus_return_events else 'まっすぐ'}")
                     # 次の相手を選ぶ（生存ノードのみ）
                     candidates = [i for i in range(len(agents))
                                   if i != active[0] and i != active[1]
@@ -5636,21 +5845,23 @@ while True:
         farewell_look_away = getattr(mode_menu, 'twofus_farewell_look_away', False)
 
         for idx, ag in enumerate(agents):
+            _z_prev = ag.z   # スルー制限用 (ウィンチ最大速度)
             is_active_a = (idx == active[0])
             is_active_b = (idx == active[1])
             is_new = (phase == "swapping" and idx == mode_menu.twofus_swap_target)
             is_leaving = (phase == "swapping" and idx == active[mode_menu.twofus_leaving])
             is_the_one_leaving = (idx == active[mode_menu.twofus_leaving])
+            _gathering = (mode_menu.twofus_phase == "gathering")   # 集合中はアクティブ2台もモブ扱い (天井へ、消灯)
 
             if in_transition:
                 # --- トランジション中: 元の位置からターゲットへイージング ---
-                if is_active_a or is_active_b:
+                if (is_active_a or is_active_b) and not _gathering:
                     target_z = twofus_target_z
                 else:
                     target_z = twofus_mob_z
                 ag.z = ag.twofus_start_z + (target_z - ag.twofus_start_z) * eased_progress
                 # 色フェード
-                if is_active_a or is_active_b:
+                if (is_active_a or is_active_b) and not _gathering:
                     tc = ag.twofus_own_color
                 else:
                     tc = vector(0, 0, 0)
@@ -5661,8 +5872,24 @@ while True:
                 ag.pitch += (0.0 - ag.pitch) * 0.1
 
             elif is_leaving:
-                # --- 帰還中: 上昇 ---
-                ag.z = min(twofus_mob_z, ag.z + mode_menu.twofus_return_speed * dt)
+                # --- 帰還中: 上昇 (戸惑いイベントがあれば途中で少し下がって止まる) ---
+                _ev = None
+                for _e in getattr(mode_menu, 'twofus_return_events', []):
+                    if _e["state"] != "done":
+                        _ev = _e
+                        break
+                _risen = ag.z - getattr(mode_menu, 'twofus_return_start_z', ag.z)
+                if _ev is not None and _ev["state"] == "pending" and _risen >= _ev["at_rise"]:
+                    _ev["state"] = "dipping"; _ev["z0"] = ag.z
+                if _ev is not None and _ev["state"] == "dipping":
+                    ag.z = ag.z - mode_menu.twofus_return_speed * dt          # 相手の方へ戻りかける
+                    if ag.z <= _ev["z0"] - _ev["dip"]:
+                        _ev["state"] = "pausing"; _ev["t0"] = sim_time
+                elif _ev is not None and _ev["state"] == "pausing":
+                    if sim_time - _ev["t0"] >= _ev["pause"]:                 # 止まって迷う
+                        _ev["state"] = "done"
+                else:
+                    ag.z = min(twofus_mob_z, ag.z + mode_menu.twofus_return_speed * dt)
                 # 上昇するにつれフェードアウト
                 fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
                 base_c = ag.twofus_own_color
@@ -5681,7 +5908,7 @@ while True:
 
             elif is_new:
                 # --- 新規: 降下中 ---
-                ag.z = max(twofus_target_z, ag.z - twofus_descend_speed * dt)
+                ag.z = twofus_descend_step(ag, twofus_target_z, sim_time, dt)
                 # 降下するにつれフェードイン
                 fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
                 ag.current_color = ag.twofus_own_color * fade
@@ -5696,7 +5923,7 @@ while True:
                 target_pitch = math.degrees(math.atan2(dz, max(0.1, dist_h)))
                 ag.pitch += (max(-60, min(60, target_pitch)) - ag.pitch) * 0.1
 
-            elif is_active_a or is_active_b:
+            elif (is_active_a or is_active_b) and not _gathering:
                 # --- アクティブ: 交信中 or 別れ中 ---
 
                 # パートナー情報
@@ -5728,8 +5955,9 @@ while True:
                 bob_target_z = max(twofus_bob_min - 0.1, min(twofus_bob_max + 0.1, bob_target_z))
 
                 if phase == "descending":
-                    ag.z = max(bob_target_z, ag.z - twofus_descend_speed * dt)
+                    ag.z = twofus_descend_step(ag, bob_target_z, sim_time, dt)
                 else:
+                    ag.twofus_desc_nom = None   # 降下終了: 次の降下用に状態をリセット
                     ag.z += (bob_target_z - ag.z) * 0.08
 
                 # --- 色: 時間をかけて相手の色に影響されていく ---
@@ -5802,10 +6030,14 @@ while True:
 
             else:
                 # --- モブ: 天井に待機、消灯 ---
+                ag.twofus_desc_nom = None
                 ag.z += (twofus_mob_z - ag.z) * 0.1
                 ag.current_color = vector(0, 0, 0)
                 ag.pitch += (0.0 - ag.pitch) * 0.1
 
+            # ウィンチ最大速度でスルー制限 (降下・上下動・帰還・トランジションすべて)
+            _dz_max = winch_max_speed_mps * dt
+            ag.z = _z_prev + max(-_dz_max, min(_dz_max, ag.z - _z_prev))
             # z clamp
             ag.z = max(minZ, min(maxZ, ag.z))
 
@@ -5862,7 +6094,7 @@ while True:
             ])
 
         # フェーズ情報（0=descending, 1=interacting, 2=farewell, 3=swapping）
-        phase_map = {"descending": 0, "interacting": 1, "farewell": 2, "swapping": 3}
+        phase_map = {"gathering": 0, "descending": 0, "interacting": 1, "farewell": 2, "swapping": 3}   # gathering は Max には descending と同じ 0 で送る
         phase_int = phase_map.get(phase, 0)
         osc_client_max.send_message('/twofus/phase', int(phase_int))
 
@@ -5880,6 +6112,95 @@ while True:
             send_queue.put(ag)
 
     # メインループの既存のelif文の後に追加：
+    elif mode_menu.selected == "陣取りモード" and TERRITORY_AVAILABLE:
+        # ========================================================
+        # 陣取りモード: 意見ダイナミクス+視線+疲弊+争点転換 (territory/)
+        # モデル本体は territory/territory_test_sender.py の Territory クラス。
+        # 音響は territory_engine.scd (SC, port 57120) へOSC送信(無くても動く)。
+        # ========================================================
+        if not hasattr(mode_menu, 'territory_initialized') or not mode_menu.territory_initialized:
+            print("[陣取りモード] 初期化開始")
+            mode_menu.territory_initialized = True
+            mode_menu.territory_model = TerritoryModel([(ag.x, ag.y) for ag in agents])
+            mode_menu.territory_frame = 0
+            mode_menu.territory_active = True
+            try:
+                mode_menu.territory_client = TerritoryClient()
+                mode_menu.territory_client.scene(True)
+            except Exception as e:
+                print(f"[陣取りモード] 音響なしで続行: {e}")
+                mode_menu.territory_client = None
+            for ag in agents:
+                ag.terr_disp_col = None
+                ag.autonomous_mode = False
+            print(f"[陣取りモード] {len(agents)}体で開始 (自動転換ON)")
+
+        terr = mode_menu.territory_model
+        tclient = mode_menu.territory_client
+
+        # ── モデルを1ステップ進めて音響へ送信 ──
+        terr_ticks, terr_auto_shifted = terr.step(dt)
+        terr_says = terr.utterances()
+        if terr_auto_shifted:
+            print(f"[陣取りモード] 自動転換 (通算{terr.shift_count}回)  R={terr.R:.2f} C={terr.C:.2f}")
+        if tclient is not None:
+            try:
+                if terr_auto_shifted:
+                    tclient.shift(True)
+                tclient.send_state(terr.op_unwrap, terr.conviction(), terr.w,
+                                   terr.ht, terr.tilt, terr.omega_rad_s())
+                for _ti, _vel in terr_ticks:
+                    tclient.tick(_ti, _vel, terr_pitch_class(terr.op_unwrap[_ti]))
+                for _si, _dur, _amp in terr_says:
+                    _conv = math.hypot(terr.vx[_si], terr.vy[_si])
+                    tclient.say(_si, _dur, _amp, terr.op_unwrap[_si], _conv,
+                                terr.w[_si], terr.ht[_si], terr.tilt[_si])
+                mode_menu.territory_frame += 1
+                if mode_menu.territory_frame % 4 == 0:
+                    tclient.send_global(terr.R, terr.C, terr.camps, terr.mean_op())
+            except Exception as e:
+                print(f"[陣取りモード] OSC送信エラー: {e}")
+                mode_menu.territory_client = None
+
+        # ── モデル状態をロボットへマップ ──
+        for k_ag, ag in enumerate(agents):
+            # ヨー: モデルの向き(rad, 連続)→度
+            ag.yaw = math.degrees(terr.th[k_ag]) % 360.0
+            # ピッチ: tilt +1=下向き(聴衆へ) → VPythonでは負方向
+            ag.pitch = max(-60.0, min(60.0, -60.0 * terr.tilt[k_ag]))
+            # 高さ: ht 0=天井, 1=降下(確信が強いほど降りてくる)。最低到達点1.9m
+            terr_tgt_z = maxZ - terr.ht[k_ag] * (maxZ - vz(1.9))
+            ag.z += (terr_tgt_z - ag.z) * min(1.0, 3.0 * dt)
+            ag.z = max(minZ, min(maxZ, ag.z))
+
+            # 色: スペクトラム(彩度キープ)。遷移は色相環を歩かず、
+            # RGB空間の最短距離を0.3s平滑で辿り、明度(最大成分)は正規化で維持。
+            # 中間は2色の混合色(補色ペアなら一瞬白っぽく抜ける)になり、
+            # レインボー掃引は起きない
+            _aw = math.atan2(terr.vy[k_ag], terr.vx[k_ag])
+            _hmap = _aw * (2.0 / 3.0) if _aw >= 0 else _aw * (4.0 / 3.0)
+            _hue01 = (_hmap % (2 * math.pi)) / (2 * math.pi)
+            _r0, _g0, _b0 = colorsys.hsv_to_rgb(_hue01, 1.0, 1.0)
+            if ag.terr_disp_col is None:
+                ag.terr_disp_col = vector(_r0, _g0, _b0)
+            _k = min(1.0, dt / 0.3)
+            _c = ag.terr_disp_col + (vector(_r0, _g0, _b0) - ag.terr_disp_col) * _k
+            _m = max(_c.x, _c.y, _c.z)
+            if _m > 1e-6:
+                _c = _c / _m
+            ag.terr_disp_col = _c
+            terr_color = _c
+            ag.body.color = terr_color
+            for _ld3, _ld2, _ in ag.leds:
+                _ld3.color = _ld2.color = terr_color
+            ag.current_color = terr_color
+            ag.target_downlight = 0.0
+
+            update_geometry(ag)
+            ag.display()
+            update_downlight_display(ag)
+            send_queue.put(ag)
+
     elif mode_menu.selected == "マニュアルモード":
         # マニュアルモードの処理
         process_manual_commands()
@@ -5946,6 +6267,16 @@ while True:
 
     if mode_menu.selected != "The two of us":
         mode_menu.twofus_initialized = False
+
+    if mode_menu.selected != "陣取りモード":
+        if getattr(mode_menu, 'territory_active', False):
+            try:
+                if mode_menu.territory_client is not None:
+                    mode_menu.territory_client.scene(False)
+            except Exception:
+                pass
+            mode_menu.territory_active = False
+        mode_menu.territory_initialized = False
 
     # ─── デッドノード表示更新 ──────────────────────────
     alive_set = get_alive_node_ids()

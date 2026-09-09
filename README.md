@@ -295,3 +295,18 @@ Row  y=-2.70:   26   27   28   29            (x: -1.35 to +1.35)
 ## License
 
 Private repository. All rights reserved.
+
+## Venue setup (2026-09-09)
+
+`choreography/main.py` の先頭ブロックで会場を切り替える:
+
+| 変数 | 内容 |
+|---|---|
+| `layout` | `"nmw"` (New Media Week: 25台, `node_nmw.csv`, 吊元4.5m, 最高4.3m) / `"fu"` (コモネ: 29台, `node.csv`, 天高3.0m, 最高2.8m) |
+| `VENUES[...]["top"]` | その会場の最高高さ = `maxZ` |
+| `VENUES[...]["room"]` / `audience_area` | 部屋サイズ(床/天井の表示)と観客が動く範囲 [m]。NMW はカーテンで奥行き(ライン方向)7m×横幅6m |
+| `z_anchor` (2.0m) | これ以下の高さは人基準としてそのまま。これより上は `top` まで線形に引き伸ばす (`vz(h)`, 振幅は `vdz(d)`) |
+| `robot_z_offset_m` | ファームウェアが天井高2.8m固定で高さ(mm)を解釈している場合に `top - 2.8` を入れる |
+
+各シーンの高さ定数はコモネ基準 (`vz(2.5)` など) のまま書き、会場に応じて自動変換される。
+`rain/` `territory/` の robots.json は `python3 choreography/gen_robots_json.py` で同じ配置に揃える。

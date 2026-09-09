@@ -14,3 +14,7 @@ venv/
 .vscode/
 .idea/
 
+
+# Claude Code local settings / runtime outputs
+.claude/
+territory/viz_state.json

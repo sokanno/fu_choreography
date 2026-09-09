@@ -1,0 +1,44 @@
+{
+  "comment": "FU territory scene shared config. SC reads audio/speaker settings, Python reads osc destination. NMW 4ch: 正面=配置図(PRODUKCJA p.47)の右側(PC側)。SCのパン四隅 FL/FR/RL/RR は robots.json の正規化座標で FL=(0,0)=図の左下, FR=(1,0)=図の右下, RL=(0,1)=図の左上, RR=(1,1)=図の右上。観客視点のスピーカー番号 1=手前左(図の右下=FR) 2=手前右(図の右上=RR) 3=奥左(図の左下=FL) 4=奥右(図の左上=RL) を出力ch 0..3 に割当。正面が図の左側なら FL:0 FR:2 RL:1 RR:3 に入れ替える。speaker_positions は参考値(SC未使用)。",
+  "osc": {
+    "sc_host": "127.0.0.1",
+    "sc_port": 57120,
+    "high_rate_hz": 20,
+    "low_rate_hz": 5
+  },
+  "audio": {
+    "speaker_channels": {
+      "FL": 2,
+      "FR": 0,
+      "RL": 3,
+      "RR": 1
+    },
+    "speaker_positions": {
+      "FL": [
+        0.07,
+        0.11
+      ],
+      "FR": [
+        0.96,
+        0.11
+      ],
+      "RL": [
+        0.07,
+        0.88
+      ],
+      "RR": [
+        0.96,
+        0.88
+      ]
+    },
+    "dev_stereo": true,
+    "master_gain_db": 0.0,
+    "scene_fade_s": 3.0,
+    "speaker_labels": {
+      "FL": "3 奥左",
+      "FR": "1 手前左",
+      "RL": "4 奥右",
+      "RR": "2 手前右"
+    }
+  }
+}
