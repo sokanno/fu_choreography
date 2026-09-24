@@ -370,9 +370,10 @@ twofus_return_speed_max = 2.0 if layout == "fu" else winch_max_speed_mps   # 帰
 twofus_blink_fast_freq  = 6.0    # 速い点滅の周波数 [Hz]
 twofus_blink_slow_freq  = 0.5    # 遅い点滅の周波数 [Hz]
 twofus_farewell_dur     = 3.0    # 別れの演出時間 [s]
+twofus_wait_gather      = False  # True: 全員が天井に揃ってから最初の2台が降りる / False: 待たずにすぐ降ろす (2026-09-24 ユーザー判断)
 twofus_gather_timeout   = 30.0   # モード開始時に全員が天井に揃うのを待つ上限 [s] (0.2 m/s なら 2.3 m で約 12 s)
 # 帰還の「戸惑い」: 確率で 1〜2 回、少し下がって(相手の方へ戻りかけて)から上り直す。残りはまっすぐ帰る (ミックス)
-twofus_hesitate_prob    = 0.5    # 戸惑いながら帰る確率
+twofus_hesitate_prob    = 0.1    # 戸惑いながら帰る確率 (2026-09-24: 0.5→0.1 ほぼ素直に退散)
 twofus_hesitate_dip_m   = (0.15, 0.35)   # 1 回の戻り下がり量 [m] の範囲
 twofus_hesitate_pause_s = (0.8, 2.0)     # 下がった後に止まる時間 [s] の範囲
 
@@ -5515,7 +5516,9 @@ while True:
             mode_menu.twofus_active = pair          # [idx_a, idx_b]
             print(f"[The two of us] 生存ノード: {len(alive_indices)}/{len(agents)} "
                   f"(pair: {[agents[i].node_id for i in pair]})")
-            mode_menu.twofus_phase = "gathering"    # gathering(全員天井へ) → descending → interacting → farewell → swapping
+            # gathering(全員天井へ) → descending → interacting → farewell → swapping
+            # twofus_wait_gather=False なら集合を待たずに最初の2台が降り始める (2026-09-24)
+            mode_menu.twofus_phase = "gathering" if twofus_wait_gather else "descending"
             mode_menu.twofus_gather_start = sim_time
             mode_menu.twofus_swap_target = None      # 交代時の新しい相手idx
 
@@ -5790,6 +5793,11 @@ while True:
                         candidates = [i for i in range(len(agents))
                                       if i != active[0] and i != active[1]]
                     mode_menu.twofus_swap_target = random.choice(candidates)
+                    mode_menu.twofus_blink_freq_new = random.uniform(0.3, 4.0)   # 新入りの降下中の点滅 (交信開始で新ペアの周波数に切替)
+                    agents[mode_menu.twofus_swap_target].twofus_new_arrived = False
+                    mode_menu.twofus_blink_freq_leave = random.uniform(0.3, 1.5)   # 帰る側の明滅 (ゆっくりめ)
+                    # 残る側(active[1]=B)は別れで遅くなった点滅(0.2Hz)のままだと固まって見えるので戻す (2026-09-24)
+                    mode_menu.twofus_blink_freq_b = random.uniform(0.5, 2.5)
                     mode_menu.twofus_farewell_phase = None
                     print(f"[The two of us] 交代開始: "
                           f"帰還={agents[active[mode_menu.twofus_leaving]].node_id} "
@@ -5806,7 +5814,7 @@ while True:
 
                 # 帰還完了 & 新規到着を判定
                 left_done = ag_leaving.z >= twofus_mob_z - 0.05
-                new_arrived = ag_new.z <= twofus_target_z + 0.05
+                new_arrived = getattr(ag_new, 'twofus_new_arrived', False) or ag_new.z <= twofus_target_z + 0.05
 
                 if left_done and new_arrived:
                     # ペア更新
@@ -5893,7 +5901,9 @@ while True:
                 # 上昇するにつれフェードアウト
                 fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
                 base_c = ag.twofus_own_color
-                ag.current_color = base_c * fade
+                # 帰還中も明滅 (2026-09-24)
+                blink = (math.sin(sim_time * 2 * math.pi * getattr(mode_menu, 'twofus_blink_freq_leave', 1.0)) + 1.0) / 2.0
+                ag.current_color = base_c * fade * (0.2 + 0.8 * blink)
                 # 帰還中もパートナーの方を見る（名残惜しさ）
                 partner_idx = active[1 - mode_menu.twofus_leaving]
                 partner = agents[partner_idx]
@@ -5907,15 +5917,29 @@ while True:
                 ag.pitch += (max(-60, min(60, target_pitch)) - ag.pitch) * 0.1
 
             elif is_new:
-                # --- 新規: 降下中 ---
-                ag.z = twofus_descend_step(ag, twofus_target_z, sim_time, dt)
-                # 降下するにつれフェードイン
-                fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
-                ag.current_color = ag.twofus_own_color * fade
-                # 降下中、待っている相手の方を向く
+                # --- 新規: 降下中 → 到着後は相手の帰還を待ちながら上下にゆらぐ (2026-09-24: 凍って見えないように) ---
+                _off = ag.node_id * 13.7
+                if not getattr(ag, 'twofus_new_arrived', False):
+                    ag.z = twofus_descend_step(ag, twofus_target_z, sim_time, dt)
+                    if ag.z <= twofus_target_z + 0.05:
+                        ag.twofus_new_arrived = True
+                    # 降下するにつれフェードイン
+                    fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
+                else:
+                    ag.twofus_desc_nom = None
+                    _bv = (pnoise2(sim_time * 0.15 + _off, _off * 0.7)
+                           + pnoise2(sim_time * 0.6 + _off + 500, _off * 0.3) * 0.3 + 1.0) / 2.0
+                    _bt = twofus_bob_min + (twofus_bob_max - twofus_bob_min) * max(0.0, min(1.0, _bv))
+                    ag.z += (_bt - ag.z) * 0.08
+                    fade = 1.0
+                # 降下中・到着後に相手の帰還を待つ間も明滅する
+                blink = (math.sin(sim_time * 2 * math.pi * getattr(mode_menu, 'twofus_blink_freq_new', 1.0)) + 1.0) / 2.0
+                ag.current_color = ag.twofus_own_color * fade * (0.2 + 0.8 * blink)
+                # 降下中、待っている相手の方を向く (視線は少し揺らす)
                 staying_idx = active[1 - mode_menu.twofus_leaving]
                 partner = agents[staying_idx]
-                target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
+                target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x)) \
+                    + 25.0 * pnoise1(sim_time * 0.3 + _off)
                 dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
                 ag.yaw += dyaw * 2.0 * dt
                 dz = partner.z - ag.z
@@ -5983,7 +6007,16 @@ while True:
                     max(0.0, min(1.0, blended_color.z)))
 
                 # --- 向き制御（yaw & pitch） ---
-                if is_farewell:
+                # 交代中の残る側: 降りてくる新入りを目で追う (2026-09-24: 固まって見えないように)
+                if phase == "swapping" and mode_menu.twofus_swap_target is not None:
+                    partner = agents[mode_menu.twofus_swap_target]
+                    dist_h = math.hypot(partner.x - ag.x, partner.y - ag.y)
+                    dz = partner.z - ag.z
+                    target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x)) \
+                        + 20.0 * pnoise1(sim_time * 0.3 + bob_offset)
+                    dyaw = ((target_yaw - ag.yaw + 540) % 360) - 180
+                    ag.yaw += dyaw * 2.0 * dt
+                elif is_farewell:
                     # 別れの演出
                     if farewell_sub == "gaze":
                         target_yaw = math.degrees(math.atan2(partner.y - ag.y, partner.x - ag.x))
@@ -6068,11 +6101,17 @@ while True:
         # OSC送信（Max/MSPへ）
         # ========================================================
         # 各筒の高さ・明滅・色を送信（高さ→音量、明滅→ビブラート、RGB→音色）
+        # イントロ(トランジション+全員が天井に集合するまで)は全筒 無音(0)で送る。
+        # 前シーンの色が残っていて低い位置の筒が一斉に鳴るのを防ぐ (2026-09-24)
+        _twofus_mute = in_transition or mode_menu.twofus_phase == "gathering"
         for ag in agents:
             # 高さを正規化: ceiling(2.8m)=0.0, target(2.0m)=1.0, それ以下も1.0
             z_norm = max(0.0, min(1.0, (maxZ - ag.z) / (maxZ - twofus_target_z)))
             # 明滅の明るさ（0〜1）
             brightness = max(0.0, min(1.0, mag(ag.current_color)))
+            if _twofus_mute:
+                z_norm = 0.0
+                brightness = 0.0
             # RGB正規化（色の方向を抽出、合計1.0になるように）
             r_raw = max(0.0, ag.current_color.x)
             g_raw = max(0.0, ag.current_color.y)
