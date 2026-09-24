@@ -18,3 +18,4 @@ venv/
 # Claude Code local settings / runtime outputs
 .claude/
 territory/viz_state.json
+territory/territory_engine.log
