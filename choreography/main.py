@@ -24,6 +24,7 @@ import threading
 import queue
 
 # ── 陣取りモード: territory/ のシミュレーション+音響クライアント ──
+terr_color_smooth_s = 1.5   # 陣取りの色の追従の遅さ [s] (0.3 だとカオス中の色のちらつきが速すぎた。2026-09-24)
 import os, sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "territory"))
 try:
@@ -6184,6 +6185,12 @@ while True:
             print(f"[陣取りモード] 自動転換 (通算{terr.shift_count}回)  R={terr.R:.2f} C={terr.C:.2f}")
         if terr.melt_fired:
             print(f"[陣取りモード] 前線溶解  camps={terr.camps} R={terr.R:.2f} C={terr.C:.2f}")
+        if terr.phase_event == 'crystallize':
+            print(f"[陣取りモード] 結晶化: {terr.camps}陣営に割れた")
+        elif terr.phase_event == 'dissolve':
+            print("[陣取りモード] 溶解: 陣営がほどけてカオスへ")
+        for _ci, _a, _b in terr.converts:
+            print(f"[陣取りモード] 寝返り: 筒{_ci+1}が相手陣営へ")
         if terr.prov_event:
             _pk, _pi = terr.prov_event
             print(f"[陣取りモード] {'挑発: 筒%dが突出' % (_pi+1) if _pk=='lunge' else '寝返り: 筒%dが転向' % (_pi+1)}")
@@ -6205,6 +6212,14 @@ while True:
                     tclient.shift(True)
                 if terr.melt_fired:
                     tclient.melt()
+                for _li in terr.lands:
+                    tclient.land(_li, terr.op_unwrap[_li])   # 底に着いた瞬間: ドン
+                if terr.phase_event == 'crystallize':
+                    _pcs = terr.camp_pcs()
+                    if _pcs:
+                        tclient.braam(*_pcs)   # 結晶化の瞬間: ドゥーン (2陣営の音高)
+                elif terr.phase_event == 'dissolve':
+                    tclient.melt()        # 溶解: 境界が液状化する音
                 if terr.schism_event:
                     if terr.schism_event[0] in ('begin', 'grumble'):
                         tclient.split(0)
@@ -6242,7 +6257,7 @@ while True:
             ag.z = max(minZ, min(maxZ, ag.z))
 
             # 色: スペクトラム(彩度キープ)。遷移は色相環を歩かず、
-            # RGB空間の最短距離を0.3s平滑で辿り、明度(最大成分)は正規化で維持。
+            # RGB空間の最短距離を terr_color_smooth_s 秒の平滑で辿り、明度(最大成分)は正規化で維持。
             # 中間は2色の混合色(補色ペアなら一瞬白っぽく抜ける)になり、
             # レインボー掃引は起きない
             _aw = math.atan2(terr.vy[k_ag], terr.vx[k_ag])
@@ -6254,7 +6269,7 @@ while True:
             # 確信を失った筒は直前の色を保持(確信ゼロ付近の色相はノイズなので
             # 追従させない=溶解・離脱時のランダム色化を防ぐ)
             _conv_k = math.hypot(terr.vx[k_ag], terr.vy[k_ag])
-            _k = min(1.0, dt / 0.3) * max(0.12, min(1.0, _conv_k / 0.35))
+            _k = min(1.0, dt / terr_color_smooth_s) * max(0.12, min(1.0, _conv_k / 0.35))
             _c = ag.terr_disp_col + (vector(_r0, _g0, _b0) - ag.terr_disp_col) * _k
             _m = max(_c.x, _c.y, _c.z)
             if _m > 1e-6:

@@ -62,12 +62,20 @@ var robots = robotsFile["robots"].collect { |r|
 // ---------------- layer gains (tune here) ----------------
 ~droneGain = 0.16;
 ~sayGain   = 0.55;
-~sayDurScale = 0.5; // しゃべり層の1音の長さの倍率 (モデルは0.4〜2.8秒を出す。2026-09-24: 長すぎ→0.5)
+~sayDurScale = 0.5; // しゃべり層の1音の長さの倍率・天井付近 (モデルは0.4〜2.8秒を出す。2026-09-24: 長すぎ→0.5)
+~sayDurLow = 1.5;   // 同・最下(1.9m)まで降りたときの倍率。高さに比例して間をつなぐ (2026-09-24)
+~htPitchSemis = 12; // 降りるほど音程を下げる量(半音)。ht 0=天井(4.3m)で0、ht 1=最下(1.9m)で -この値。0で無効 (2026-09-24)
+~crescK = 2.0;      // 底に近づくほどのクレッシェンド: 音量 ×(1 + この値 × ht^3)。ht 1(最下)で ×3 (+9.5dB) (2026-09-24)
+~landGain = 0.0;    // 筒が底に着いた瞬間の「ドン」。0で無効 (2026-09-24: 爆弾っぽいので無効。戻すなら0.6)
+~cutHt = 0.85;      // 降りきった判定: ここで声がスパッと切れて残響だけ残る
+~reopenHt = 0.35;   // 切れた声は、ここまで戻ったら(天井側)また鳴り出す。戻る途中は無音
+~htSurface = 0.75;  // 降りてきた筒(=対立の前線)のドローンを浮上させる量。ht 0.5→1 で 0→この値までゲートが開き、低音(サブ)も太る。0で無効
 ~tickGain  = 0.0;   // ノック層は休眠中(声の指向性に置換、戻すなら0.5)
 ~massGain  = 0.4;
 ~shiftGain = 0.5;
-~meltGain  = 0.4;
+~meltGain  = 0.0;   // 溶解の音 (ノイズが10秒かけて下降+落ちる音程)。爆弾の落下音に聞こえるので無効 (2026-09-24。戻すなら0.4)
 ~splitGain = 0.45;
+~braamGain = 0.0;   // 結晶化の瞬間の「ドゥーン」(映画トレイラー風 BRAAAM)。爆発に聞こえるので無効 (2026-09-24。戻すなら0.55)
 ~revMix    = 0.5;
 ~baseMidi  = 39;    // register 0 root; registers at +0 / +12 / +24
 
@@ -101,6 +109,7 @@ s.waitForBoot {
 	~tiltBus = Bus.control(s, ~nBots);  // tilt -1..1
 	~omBus   = Bus.control(s, ~nBots);  // |yaw vel| rad/s
 	~faceBus = Bus.control(s, ~nBots);  // 0..1 head points at the audience
+	~vgBus   = Bus.control(s, ~nBots);  // 各筒の声のゲート (ドローンが書き、しゃべりが読む)
 
 	~rBus      = Bus.control(s, 1);     // heading order parameter R
 	~cBus      = Bus.control(s, 1);     // opinion coherence C
@@ -113,6 +122,7 @@ s.waitForBoot {
 	~convBus.setn(0.0 ! ~nBots);
 	~htBus.setn(0.5 ! ~nBots);
 	~faceBus.setn(0.5 ! ~nBots);
+	~vgBus.setn(1.0 ! ~nBots);
 	~gainBus.set(masterDb);
 	~lastHt = 0.5 ! ~nBots;
 
@@ -121,12 +131,19 @@ s.waitForBoot {
 		|out = 0, idx = 0, reg = 0, baseMidi = 39,
 		wFL = 0.25, wFR = 0.25, wRL = 0.25, wRR = 0.25,
 		opBus = 0, convBus = 0, fatBus = 0, htBus = 0, tiltBus = 0, omBus = 0,
-		faceBus = 0, cBus = 0, droneGain = 0.16|
+		faceBus = 0, cBus = 0, droneGain = 0.16, htSemis = 5, htSurface = 0.75, crescK = 2,
+		vgBus = 0, cutHt = 0.85, reopenHt = 0.35|
 
 		var op   = In.kr(opBus + idx);
 		var conv = Lag.kr(In.kr(convBus + idx), 0.25).clip(0, 1);
 		var fat  = Lag.kr(In.kr(fatBus + idx), 0.6).clip(0, 1);
 		var ht   = Lag.kr(In.kr(htBus + idx), 0.5).clip(0, 1);
+		// 降下の声 (2026-09-24): 降りる間はクレッシェンドして底でピーク → 降りきった瞬間に
+		// スパッと切れて残響だけ残る → 戻る(上がる)間は無音 → 天井側まで戻ったら再び鳴る
+		var htRaw  = In.kr(htBus + idx).clip(0, 1);
+		var cutOn  = SetResetFF.kr(htRaw > cutHt, htRaw < reopenHt);
+		var rising = LagUD.kr((Slope.kr(Lag.kr(htRaw, 0.2)) < -0.02) * (htRaw > reopenHt), 0.05, 0.6);
+		var vg     = LagUD.kr((1 - cutOn) * (1 - rising), 0.8, 0.025);   // 切れるのは一瞬、戻りはゆっくり
 		var tilt = Lag.kr(In.kr(tiltBus + idx), 0.5).clip(-1, 1);
 		var om   = Lag.kr(In.kr(omBus + idx).abs, 0.15);
 		// voice directivity: the head is a beam — facing the audience the
@@ -137,7 +154,7 @@ s.waitForBoot {
 		// the lag in midi space is the glissando between chord tones
 		var p    = op / 2pi * 12;
 		var pc   = (p.round.mod(12) * 7).mod(12);
-		var midi = Lag.kr(baseMidi + (reg * 12) + pc, 0.5);
+		var midi = Lag.kr(baseMidi + (reg * 12) + pc, 0.5) - (htSemis * ht);
 		var freq = midi.midicps;
 
 		// fatigue -> detune spread + slow pitch waver + amplitude tremor
@@ -176,7 +193,7 @@ s.waitForBoot {
 			+ (HPF.ar(sqrS,  wGn.linexp(0, 1, 9000, 80)) * wGn)
 			+ (HPF.ar(pureS, wBl.linexp(0, 1, 9000, 80)) * wBl)
 			+ (HPF.ar(metS,  wMg.linexp(0, 1, 9000, 80)) * wMg)
-		) / wSum) + (SinOsc.ar(freq * 0.5) * 0.3);
+		) / wSum) + (SinOsc.ar(freq * 0.5) * (0.3 + (0.5 * ((ht - 0.5) * 2).clip(0, 1))));
 		var tremor = 1 - (fat * 0.45 * LFNoise2.kr(5.5).range(0, 1));
 
 		// a tube whose opinion is in motion hums audibly while it transforms,
@@ -202,7 +219,7 @@ s.waitForBoot {
 		             * face.linlin(0, 1, 0.4, 1.0);
 
 		var amp = (conv ** 1.3).linlin(0, 1, 0.05, 1.0)
-			* ht.linlin(0, 1, 0.45, 1.25)
+			* ht.linlin(0, 1, 0.45, 1.25) * (1 + (crescK * ht.cubed))   // 底へ向けてクレッシェンド
 			* (1 - (0.35 * tilt.neg.max(0)))
 			* face.linlin(0, 1, 0.65, 1.2)
 			* tremor;
@@ -211,9 +228,13 @@ s.waitForBoot {
 		// room approaches unanimity (C high) OR while this tube's color is
 		// actively sliding (trans), so the spectral morph is heard in motion
 		var cGlob = Lag.kr(In.kr(cBus), 1.0).clip(0, 1);
-		var gate = (0.08 + (0.92 * cGlob * cGlob)).max(0.65 * trans);
+		// 対立の前線が降りてくると(ht > 0.5)その筒のドローンが浮かび上がる:
+		// 界面が降りる = トーンが下がって(htSemis)強くなる (2026-09-24)
+		var gate = (0.08 + (0.92 * cGlob * cGlob)).max(0.65 * trans)
+			.max(htSurface * ((ht - 0.5) * 2).clip(0, 1).squared);
 		var sig = ((tone * voiced) + (breath * (1 - voiced) * 0.7) + swish)
-			* amp * droneGain * gate;
+			* amp * droneGain * gate * vg;
+		ReplaceOut.kr(vgBus + idx, vg);                    // しゃべり層も同じ筒の声は同時に切る
 		Out.ar(out, sig * [wFL, wFR, wRL, wRR]);
 	}).add;
 
@@ -221,12 +242,15 @@ s.waitForBoot {
 	SynthDef(\terrSay, {
 		|out = 0, dur = 1, amp = 0.5, op = 0, conv = 0.7, fat = 0,
 		ht = 0.5, tilt = 0, reg = 0, baseMidi = 39, idx = 0, faceBus = 0,
-		wFL = 0.25, wFR = 0.25, wRL = 0.25, wRR = 0.25, sayGain = 0.55|
+		wFL = 0.25, wFR = 0.25, wRL = 0.25, wRR = 0.25, sayGain = 0.55, htSemis = 5, htBus = 0, crescK = 2,
+		vgBus = 0|
 		var face = Lag.kr(In.kr(faceBus + idx), 0.1).clip(0, 1);
 
 		var p    = op / 2pi * 12;
 		var pc   = (p.round.mod(12) * 7).mod(12);
-		var midi = baseMidi + (reg * 12) + pc;
+		// 高さは鳴っている間も追従: 降りながらしゃべると音程がスイープして下がる (2026-09-24)
+		var htLive = Lag.kr(In.kr(htBus + idx), 0.3).clip(0, 1);
+		var midi = baseMidi + (reg * 12) + pc - (htSemis * htLive);
 
 		// prosody: rise, sustain, sag — fatigue lets the phrase end flat
 		var contour = EnvGen.kr(Env(
@@ -265,7 +289,8 @@ s.waitForBoot {
 			* (1 + (0.7 * tilt.max(0)))
 			* face.linlin(0, 1, 0.75, 1.3)).clip(120, 9000);
 		var env  = EnvGen.kr(
-			Env.linen(0.05, (dur - 0.2).max(0.05), 0.15, 1, \sine),
+			// 短い音でも立ち上がり/消えが急になりすぎない(プチ防止)
+			Env.linen((dur * 0.12).clip(0.04, 0.15), (dur * 0.6).max(0.05), (dur * 0.28).clip(0.12, 0.6), 1, \sine),
 			doneAction: 2);
 		var trem = 1 - (fat * 0.5 * LFNoise2.kr(6).range(0, 1));
 
@@ -283,7 +308,9 @@ s.waitForBoot {
 
 		var sig = ((RHPF.ar(toned, hpSweep, 0.45) * (1 - bF))
 		         + (RLPF.ar(toned, lpSweep, 0.45) * bF))
-			* env * trem * amp * sayGain * ht.linlin(0, 1, 0.5, 1.25)
+			* env * trem * amp * sayGain * htLive.linlin(0, 1, 0.5, 1.25)
+			* (1 + (crescK * htLive.cubed))           // 鳴りながらでも底へ向けてクレッシェンド
+			* In.kr(vgBus + idx)                      // 降りきったら/戻る間は同じ筒の声ごと切る
 			* face.linlin(0, 1, 0.65, 1.2);
 		Out.ar(out, sig * [wFL, wFR, wRL, wRR]);
 	}).add;
@@ -353,6 +380,43 @@ s.waitForBoot {
 		Out.ar(out, sig * 0.25 ! 4);
 	}).add;
 
+	// ---------------- braam: 結晶化の瞬間の「ドゥーン」 (2026-09-24 試作) ----------------
+	// 割れた2陣営の音高を超低域の金管クラスターで同時に鳴らす(対立=トライトーン等の
+	// 生の音程がそのまま和音になる)。デチューンした鋸波を重ね、歪ませ、フィルターを
+	// 一気に開いてゆっくり閉じ、尾で1オクターブ沈み込む。
+	SynthDef(\terrBraam, { |out = 0, amp = 0.55, pcA = 0, pcB = 6, dur = 5.5|
+		var env   = EnvGen.kr(Env([0, 1, 0.55, 0], [0.04, dur * 0.35, dur * 0.65], [2, -2, -4]),
+			doneAction: 2);
+		var dive  = EnvGen.kr(Env([1, 1, 0.5], [dur * 0.3, dur * 0.7], [0, -3]));
+		var voice = { |pc|
+			var f = (27 + pc).midicps * dive;       // Eb1 基準の超低域
+			var saws = Mix.fill(5, { |k|
+				Saw.ar(f * (1 + ((k - 2) * 0.006)), 0.2) })
+				+ (Mix.fill(3, { |k| Saw.ar(f * 2 * (1 + ((k - 1) * 0.004)), 0.12) }))
+				+ (SinOsc.ar(f * 0.5) * 0.9);        // サブ
+			saws
+		};
+		var cut  = EnvGen.kr(Env([150, 3200, 380], [0.07, dur * 0.8], [3, -4]));
+		var sig  = voice.(pcA) + voice.(pcB);
+		sig = RLPF.ar(sig, cut, 0.35);
+		sig = (sig * 2.2).tanh;                    // 金管の歪み
+		Out.ar(out, sig * env * amp * 0.25 ! 4);
+	}).add;
+
+	// ---------------- land: 筒が底に着いた瞬間の「ドン」 (2026-09-24) ----------------
+	// その筒の位置から、その筒の(1オクターブ沈んだ)音程の超低域で短く打つ
+	SynthDef(\terrLand, { |out = 0, amp = 0.6, midi = 27,
+		wFL = 0.25, wFR = 0.25, wRL = 0.25, wRR = 0.25|
+		var f    = midi.midicps;
+		var env  = EnvGen.kr(Env.perc(0.008, 2.2, 1, -5), doneAction: 2);
+		var body = Mix.fill(4, { |k| Saw.ar(f * (1 + ((k - 1.5) * 0.007))) }) * 0.35
+		           + (SinOsc.ar(f * 0.5 * XLine.kr(1.5, 1, 0.12)) * 1.2);
+		var cut  = EnvGen.kr(Env([120, 2400, 200], [0.01, 1.2], [3, -5]));
+		var thud = LPF.ar(WhiteNoise.ar, 180) * EnvGen.kr(Env.perc(0.002, 0.25)) * 1.5;
+		var sig  = ((RLPF.ar(body, cut, 0.4) * 1.8).tanh + thud) * env * amp;
+		Out.ar(out, sig * [wFL, wFR, wRL, wRR]);
+	}).add;
+
 	// ---------------- shift gesture ----------------
 	SynthDef(\terrShift, { |out = 0, amp = 0.5|
 		var boom = SinOsc.ar(XLine.kr(72, 40, 1.4))
@@ -406,7 +470,8 @@ s.waitForBoot {
 			\wFL, ~panW[i][0], \wFR, ~panW[i][1], \wRL, ~panW[i][2], \wRR, ~panW[i][3],
 			\opBus, ~opBus, \convBus, ~convBus, \fatBus, ~fatBus,
 			\htBus, ~htBus, \tiltBus, ~tiltBus, \omBus, ~omBus,
-			\faceBus, ~faceBus, \cBus, ~cBus, \droneGain, ~droneGain
+			\faceBus, ~faceBus, \cBus, ~cBus, \droneGain, ~droneGain, \htSemis, ~htPitchSemis, \htSurface, ~htSurface, \crescK, ~crescK,
+			\vgBus, ~vgBus, \cutHt, ~cutHt, \reopenHt, ~reopenHt
 		], ~srcGroup, \addToTail)
 	};
 
@@ -485,7 +550,8 @@ s.waitForBoot {
 
 	OSCdef(\terrSay, { |msg|
 		var i    = msg[1].asInteger;
-		var dur  = (msg[2].asFloat * ~sayDurScale).clip(0.1, 6);
+		var htS  = msg[7].asFloat.clip(0, 1);
+		var dur  = (msg[2].asFloat * (~sayDurScale + ((~sayDurLow - ~sayDurScale) * htS))).clip(0.1, 6);
 		var amp  = msg[3].asFloat.clip(0, 1);
 		var op   = msg[4].asFloat;
 		var conv = msg[5].asFloat.clip(0, 1);
@@ -500,7 +566,8 @@ s.waitForBoot {
 				\idx, i, \faceBus, ~faceBus,
 				\wFL, ~panW[i][0], \wFR, ~panW[i][1],
 				\wRL, ~panW[i][2], \wRR, ~panW[i][3],
-				\sayGain, ~sayGain
+				\sayGain, ~sayGain, \htSemis, ~htPitchSemis, \htBus, ~htBus, \crescK, ~crescK,
+				\vgBus, ~vgBus
 			], ~srcGroup, \addToTail);
 		};
 	}, '/terr/say');
@@ -524,6 +591,25 @@ s.waitForBoot {
 				\phase, 0], ~srcGroup, \addToTail);
 		};
 	}, '/terr/split');
+
+	OSCdef(\terrLand, { |msg|
+		var i  = msg[1].asInteger;
+		var op = msg[2].asFloat;
+		var pc = ((op / 2pi * 12).round.mod(12) * 7).mod(12);
+		if((~landGain > 0) and: { (i >= 0) and: { i < ~nBots } }) {
+			Synth.new(\terrLand, [\out, ~mainBus, \amp, ~landGain,
+				\midi, ~baseMidi + ((i % 3) * 12) + pc - ~htPitchSemis - 12,
+				\wFL, ~panW[i][0], \wFR, ~panW[i][1],
+				\wRL, ~panW[i][2], \wRR, ~panW[i][3]], ~srcGroup, \addToTail);
+		};
+	}, '/terr/land');
+
+	OSCdef(\terrBraam, { |msg|
+		if(~braamGain > 0) {
+			Synth.new(\terrBraam, [\out, ~mainBus, \amp, ~braamGain,
+				\pcA, msg[1].asInteger, \pcB, msg[2].asInteger], ~srcGroup, \addToTail);
+		};
+	}, '/terr/braam');
 
 	OSCdef(\terrScene, { |msg|
 		~outSynth.set(\gateLevel, if(msg[1].asInteger > 0, 1, 0));

@@ -94,5 +94,13 @@ class TerritoryClient:
         """Schism gesture: phase 0 = fissure begins (creak), 1 = secession (crack)."""
         self.client.send_message("/terr/split", [int(phase)])
 
+    def land(self, idx, op):
+        """筒が底に着いた瞬間の「ドン」(idx 0-based, 意見角 rad)。"""
+        self.client.send_message("/terr/land", [int(idx), float(op)])
+
+    def braam(self, pc_a, pc_b):
+        """結晶化の瞬間の「ドゥーン」: 割れた2陣営の音高 (pitch class 0-11)。"""
+        self.client.send_message("/terr/braam", [int(pc_a), int(pc_b)])
+
     def scene(self, on):
         self.client.send_message("/terr/scene", [1 if on else 0])

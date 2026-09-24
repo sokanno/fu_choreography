@@ -45,29 +45,12 @@ FRONT_HT = 1.0            # 前線の降下目標 (ht 1 = 最下 1.9 m)
 FRONT_TILT = 0.9          # 前線の首の傾き (+1 = 60 度下向き)
 FRONT_WEIGHT = (1.0, 0.4) # 前線からのホップ数ごとの効き (0=前線, 1=隣, それ以上は0)
 REAR_HT_SCALE = 0.6       # 後方の筒の降下を控えめに (前線との高低差を出す)
-# ---- アルゴリズム版 (2026-09-24): 演出タイマーを使わず局所ルールだけで回す ----
-# ① 前線の消耗: 相手陣営を見つめる(注意を向ける)ほど疲れ、疲れるほど耳が開く
-#    (bounded confidence が広がる)。影響力は相手の確信×元気さに比例 → 弱った側の
-#    前線が強い側に引き込まれて塗り替わる。疲れた筒は上がり、暗くなる。
-FRONT_FATIGUE = 0.010     # 対立への曝露による疲労 (per tick, 曝露1・最下で)
-OPEN_K = 0.9              # 疲労による耳の開き (eps += OPEN_K * w)
-FATIGUE_DIM = 0.6         # 疲れた筒の減光 (w=1 で 1-この値)
-# ② 落ち着かなさ r: 陣営の中で秩序が続くと上がり、カオスの中で下がる。
-#    r が高いと意見が揺らぎ(ノイズ↑・同調↓・過激化↓)、首が回り出す → 陣営が溶ける。
-#    溶けて秩序が消えると r が抜け、また結晶化する (興奮性の周期)。
-REST_UP = 0.12            # 秩序の中で r が上がる速さ [1/s] (調整: 結晶化は全体の約5割、1回30秒前後、ときどき1分超)
-REST_DOWN = 0.01          # カオスの中で r が下がる速さ [1/s] (遅いほどカオスが長い。3分のシーンで8割以上は2極化が起きる)
-ORDER_TH = 0.3            # 局所秩序 o がこれを超えると「秩序の中」
-REST_NOISE = 7.0          # r=1 で意見ノイズ ×(1+この値)
-REST_SPIN = 0.6           # r=1 で首の回転(スキャン) ×(1+この値) (大きいと全員が上限に寄って速さの差が消える)
-FRONT_HOLD = 0.9          # 睨み合いの緊張が落ち着かなさを抑える度合い (大きいほど硬直が長い)
-SPLIT_MIN = 5             # 結晶化 = 上位2陣営がそれぞれこの台数以上で…
-SPLIT_SHARE = 0.5         # …合わせて全体のこの割合以上
-CONSENSUS_SHARE = 0.7     # 最大陣営がこの割合以上 = 合意(斉一)
-CRYST_ENTER = 3.0         # 2陣営がこの秒数続いたら結晶化とみなす
-CRYST_EXIT = 8.0          # 2陣営でない状態がこの秒数続いたら溶解とみなす
-LAND_HT = 0.85            # ht がこれを上に越えたら「底に着いた」(着地音)
-LAND_COOLDOWN = 8.0       # 同じ筒の着地音の最短間隔 [s]
+# 押し込み (2026-09-24): 前線が降りきって睨み合いが続くと決着がつく。
+# 負けた側の最前列が先に上がって暗くなり、勝った側の色に塗り替わる → 前線が1列ずれる
+BREAK_FRONT_HT = 0.65     # 前線の平均 ht がこれを超えたら「睨み合い中」
+BREAK_HOLD = (5.0, 9.0)   # 睨み合いが続く秒数 (範囲からランダム) で決着
+BREAK_COOLDOWN = 8.0      # 決着のあと次の決着まで最低この秒数
+DEFEAT_DUR = 6.0          # 負けた筒の退却〜塗り替わりにかける秒数
 
 
 def angd(a, b):
@@ -131,7 +114,6 @@ class Territory:
         self.tx0, self.ty0 = [], []
         self.w = []
         self.th, self.om, self.spin = [], [], []
-        self.spd0, self.spd_n = [], []
         self.ht = [0.3] * n
         self.tilt = [0.0] * n
         for _ in range(n):
@@ -145,12 +127,9 @@ class Territory:
             self.th.append(rng.uniform(0, TWO_PI))
             self.om.append(0.0)
             self.spin.append(1 if rng.random() < 0.5 else -1)
-            # 回転の個体差 (2026-09-24): 固有の速さ(対数正規 ~0.4〜2倍) + ゆっくり揺らぐ成分
-            self.spd0.append(math.exp(rng.gauss(0.0, 0.6)))
-            self.spd_n.append(0.0)
         self.psi = 0.0
         self.op_unwrap = [math.atan2(self.vy[i], self.vx[i]) for i in range(n)]
-        self.talk = 2.0     # アルゴリズム版で確信が下がり発話が1/4に減ったので倍に (2026-09-24)
+        self.talk = 1.0
         self.next_say = [1.0 + rng.expovariate(0.2) for _ in range(n)]
         self.R = 0.0
         self.C = 0.0
@@ -183,20 +162,13 @@ class Territory:
         self.front_dist = [0] * n        # graph hops from the nearest front tube
         self.front_hops = [99] * n       # 同上だが前線が無いときは 99 (高さ・傾き用)
         self.brightness = [1.0] * n      # rear echelons dim as the standoff hardens
-        self.rest = [self.rng.random() * 0.5 for _ in range(n)]  # 落ち着かなさ r (②)
-        self.order = [0.0] * n           # 局所秩序 o (確信×近傍との一致)
-        self.expo = [0.0] * n            # 対立への曝露 (①)
-        self.camp_of = [-1] * n          # 所属陣営 (clusters の添字, -1 = 無所属)
-        self.camp_sig = [None] * n       # 所属陣営の代表方向 (寝返り検出用)
-        self.cryst = False               # 結晶化している (大きな2陣営が持続)
-        self.state_now = 'chaos'
-        self._cryst_t = 0.0
-        self.phase_event = None          # 'crystallize' | 'dissolve' (検出のみ) this step
-        self.converts = []               # この step で陣営を乗り換えた筒 [(i, 旧方向, 新方向)]
-        self.break_event = None          # 旧・押し込み版との互換 (常に None)
-        self.lands = []                  # この step で底に着いた筒
-        self._last_land = [-99.0] * n
-        self._last_conv = [-99.0] * n
+        self.defeat = [0.0] * n          # 押し込みで負けた筒 1→0 (退却・減光・塗り替え)
+        self.defeat_to = [(0.0, 0.0)] * n  # 塗り替わる先の意見ベクトル
+        self.glare_time = 0.0            # 前線が降りきって睨み合っている時間
+        self.glare_hold = BREAK_HOLD[0] + self.rng.random() * (BREAK_HOLD[1] - BREAK_HOLD[0])
+        self.last_break = -99.0
+        self.break_event = None          # ('break', 勝った側の人数, 負けて塗り替わる人数) this step
+        self.break_count = 0
         self.t = 0.0
         self.shift_count = 0
 
@@ -256,13 +228,43 @@ class Territory:
         self.stale_limit = 25.0 + self.rng.random() * 30.0
         return True
 
-    def camp_pcs(self):
-        """大きい2陣営の平均意見の音高 (pitch class)。無ければ None。"""
-        cl = sorted(self.clusters, key=len, reverse=True)[:2]
-        if len(cl) < 2:
+    def do_breakthrough(self, front):
+        """押し込み: 前線をはさむ2陣営のうち、前線の確信(疲れていないほど強い)と
+        陣営の大きさで勝る側が押し勝つ。負けた側の最前列が退却して勝った側の色へ
+        塗り替わる。Returns ('break', n_winner_front, n_converted) or None."""
+        if len(self.clusters) < 2:
             return None
-        return [pitch_class(math.atan2(sum(self.vy[i] for i in c), sum(self.vx[i] for i in c)))
-                for c in cl]
+        camp_of = {}
+        for ci, cl in enumerate(self.clusters):
+            for i in cl:
+                camp_of[i] = ci
+        big = sorted(range(len(self.clusters)), key=lambda c: -len(self.clusters[c]))[:2]
+        a, b = big
+        def edge(own, other):
+            return [i for i in front if camp_of.get(i) == own
+                    and any(camp_of.get(j) == other for j in self.nbr[i])]
+        fa, fb = edge(a, b), edge(b, a)
+        if not fa or not fb:
+            return None
+        def power(fr, c):
+            p = sum(math.hypot(self.vx[i], self.vy[i]) * (1 - self.w[i]) for i in fr)
+            return (p / len(fr)) * (0.7 + 0.3 * len(self.clusters[c]) / self.n) \
+                * (0.8 + 0.4 * self.rng.random())
+        win, lose, wf, lf = (a, b, fa, fb) if power(fa, a) >= power(fb, b) else (b, a, fb, fa)
+        wx = sum(self.vx[i] for i in self.clusters[win]) / len(self.clusters[win])
+        wy = sum(self.vy[i] for i in self.clusters[win]) / len(self.clusters[win])
+        for i in lf:
+            self.defeat[i] = 1.0
+            self.defeat_to[i] = (wx * 0.8, wy * 0.8)
+            self.w[i] = min(1.0, self.w[i] + 0.3)       # 負けて疲れる
+            self.next_say[i] = self.t + 0.3             # 敗北の声
+        for i in wf:
+            self.prov[i] = max(self.prov[i], 0.8)       # 押し勝った側が一瞬ぐっと出る
+            self.next_say[i] = self.t
+        self.last_break = self.t
+        self.break_count += 1
+        self.stale_time *= 0.5
+        return ('break', len(wf), len(lf))
 
     def _front_agents(self):
         front = []
@@ -430,25 +432,15 @@ class Territory:
             # melting tubes hear across the front, stop radicalizing and
             # bleed conviction — the boundary liquefies locally
             mi = self.melt[i]
-            ri = self.rest[i]
-            # ① 疲れるほど耳が開く
-            eps_i = self.eps + 1.2 * mi + OPEN_K * self.w[i]
-            ex_sum = att_sum = agree = 0.0
+            eps_i = self.eps + 1.2 * mi
             for j in self.nbr[i]:
                 bij = self.bear[i][j]
                 L = ((1 + math.cos(angd(bij, self.th[i]))) / 2) ** self.k_att
                 P = ((1 + math.cos(angd(self.bear[j][i], self.th[j]))) / 2) ** self.k_att
+                wt = L * (0.15 + 0.85 * P)
                 dxo = self.vx[j] - self.vx[i]
                 dyo = self.vy[j] - self.vy[i]
                 d = math.hypot(dxo, dyo)
-                # ① 影響力は相手の確信×元気さに比例 (強い側が弱った相手を引き込む)
-                mj = math.hypot(self.vx[j], self.vy[j])
-                wt = L * (0.15 + 0.85 * P) * (0.25 + 0.75 * mj * (1 - self.w[j]))
-                # 対立への曝露: 見つめている相手との意見の遠さ
-                ex_sum += L * min(1.0, max(0.0, (d - 0.8) / 0.5))
-                att_sum += L
-                if d < 0.4:
-                    agree += 1.0                    # 意見の近い隣人
                 eff_eps = eps_i
                 if self.schism_side[i] * self.schism_side[j] < 0:
                     eff_eps *= (1 - self._deaf)
@@ -459,17 +451,12 @@ class Territory:
                 sim = math.exp(-d * d * 2)
                 t_ali += self.ali * sim * math.sin(angd(self.th[j], self.th[i]))
                 t_stare += self.stare * (d / 2) * math.sin(angd(bij, self.th[i]))
-            mu_i = self.mu * (1 - 0.6 * ri)          # ② 落ち着かない筒は同調しにくい
             if wsum > 0:
-                pxl = mu_i * pxl / wsum
-                pyl = mu_i * pyl / wsum
+                pxl = self.mu * pxl / wsum
+                pyl = self.mu * pyl / wsum
             m2 = self.vx[i] ** 2 + self.vy[i] ** 2
             mag = math.sqrt(m2)
-            radf = self.alpha * (1 - 2 * self.w[i]) * (1 - m2) * (1 - mi) * (1 - ri)
-            nb_n = max(1, len(self.nbr[i]))
-            self.expo[i] = ex_sum / att_sum if att_sum > 0 else 0.0
-            self.order[i] = mag * agree / nb_n     # 局所秩序: 確信 × 近い隣人の割合
-            noise_i = self.eta * (1 + 1.5 * mi) * (1 + REST_NOISE * ri * ri)
+            radf = self.alpha * (1 - 2 * self.w[i]) * (1 - m2) * (1 - mi)
             tproj = self.tx0[i] * ex + self.ty0[i] * ey
             vproj = self.vx[i] * ex + self.vy[i] * ey
             anch = self.kap * (tproj - vproj)
@@ -480,14 +467,14 @@ class Territory:
                 - 0.08 * mi * self.vx[i]
                 + anch * ex - self.beta * mx
                 + self.kap2 * (self.tx0[i] - self.vx[i])
-                + self.rng.uniform(-1, 1) * noise_i
+                + self.rng.uniform(-1, 1) * self.eta * (1 + 1.5 * mi)
             )
             ny = self.vy[i] + f * (
                 pyl + radf * self.vy[i] - self.gam * self.w[i] * self.vy[i]
                 - 0.08 * mi * self.vy[i]
                 + anch * ey - self.beta * my
                 + self.kap2 * (self.ty0[i] - self.vy[i])
-                + self.rng.uniform(-1, 1) * noise_i
+                + self.rng.uniform(-1, 1) * self.eta * (1 + 1.5 * mi)
             )
             # damp the off-axis component (the salient axis owns the debate);
             # schism members are exempt — their revolt IS off-axis
@@ -501,8 +488,7 @@ class Territory:
                 ny /= nm
             nvx[i], nvy[i] = nx, ny
             self.w[i] = min(1.0, max(0.0, self.w[i] + f * self.fr * (m2 - 0.25)
-                                     * (1 + self.unif * self.R * self.C)
-                                     + f * FRONT_FATIGUE * self.expo[i] * mag * (0.5 + self.ht[i])))
+                                     * (1 + self.unif * self.R * self.C)))
             # a provoked tube surges: conviction pushes outward, gaze locks
             pi = self.prov[i]
             if pi > 0.0 and mag > 1e-4:
@@ -514,37 +500,13 @@ class Territory:
                     ny /= nm
                 nvx[i], nvy[i] = nx, ny
             engage = max(0.0, mag * (1 - self.w[i]) * (1 - 0.7 * mi))
-            engage = min(1.0, engage * (1 + pi)) * (1 - 0.8 * ri)
-            # 固有の速さ × ゆっくり揺らぐ速さ (OU過程) — 全員が同じ速さで回らないように
-            self.spd_n[i] += -self.spd_n[i] * 0.02 * f + self.rng.gauss(0.0, 0.09) * math.sqrt(f)
-            spd = self.spd0[i] * math.exp(max(-1.2, min(1.2, self.spd_n[i])))
-            # ときどき回転の向きが変わる (落ち着かない筒ほど頻繁)
-            if self.rng.random() < dt * (0.01 + 0.05 * ri):
-                self.spin[i] = -self.spin[i]
-            t_scan = 0.15 * (self.spin[i] * self.scan * spd * (1 + REST_SPIN * ri) - self.om[i])
+            engage = min(1.0, engage * (1 + pi))
+            t_scan = 0.15 * (self.spin[i] * self.scan - self.om[i])
             self.om[i] += f * ((1 - engage) * t_scan + engage * (t_ali + t_stare)
                                + self.rng.uniform(-1, 1) * 0.004)
             self.om[i] *= 0.93 ** f
-            self.om[i] = 0.15 * math.tanh(self.om[i] / 0.15)   # 上限は柔らかく (張り付いて全員同じ速さにならない)
+            self.om[i] = max(-0.15, min(0.15, self.om[i]))
         self.vx, self.vy = nvx, nvy
-
-        # ② 落ち着かなさ: 秩序の中で溜まり、カオスの中で抜ける
-        if self.auto_shift:
-            for i in range(n):
-                if self.order[i] > ORDER_TH:
-                    # 睨み合っている筒(曝露が高い)は緊張で落ち着かなさが溜まりにくい
-                    # → 対立は前線の緊張で硬直し、後方の退屈から崩れていく
-                    self.rest[i] = min(1.0, self.rest[i] + dt * REST_UP
-                                       * (self.order[i] - ORDER_TH) / (1 - ORDER_TH) * 2
-                                       * (1 - FRONT_HOLD * min(1.0, self.expo[i] * 2)))
-                else:
-                    self.rest[i] = max(0.0, self.rest[i] - dt * REST_DOWN)
-            # 隣どうしで少しだけ伝染 (溶け方・固まり方が面で広がる)
-            r0 = self.rest[:]
-            for i in range(n):
-                nb = self.nbr[i]
-                if nb:
-                    self.rest[i] += (sum(r0[j] for j in nb) / len(nb) - r0[i]) * min(1.0, 0.02 * f)
 
         # ongoing schism: factional pull, secession / reconciliation check
         if self.schism_active:
@@ -555,6 +517,19 @@ class Territory:
             for i in range(n):
                 p = self.prov[i] * (0.985 ** f)
                 self.prov[i] = p if p >= 0.01 else 0.0
+
+        # 押し込みで負けた筒: 勝った側の意見へ塗り替わっていく (退却しながら)
+        if any(d > 0.0 for d in self.defeat):
+            for i in range(n):
+                d = self.defeat[i]
+                if d <= 0.0:
+                    continue
+                tx, ty = self.defeat_to[i]
+                k = min(1.0, f * 0.06 * (1.2 - d))      # 退却の後半ほど速く染まる
+                self.vx[i] += (tx - self.vx[i]) * k
+                self.vy[i] += (ty - self.vy[i]) * k
+                d -= dt / DEFEAT_DUR
+                self.defeat[i] = d if d > 0.0 else 0.0
 
         # melt contagion + decay: the liquefaction creeps to neighbors while
         # the active window lasts, then only heals and the border recrystallizes
@@ -592,8 +567,7 @@ class Territory:
         # strong+fresh addresses the audience (down), burned-out looks away (up)
         # 対立の前線 (2026-09-24): 前線の筒がいちばん下まで降り、首も鋭く傾く。
         # 前線から離れた後方は控えめに。front_hops は1ステップ前の値 (前線が無ければ全員 99)
-        standoff = self.cryst and min(self.front_hops) == 0
-        self.lands = []
+        standoff = self.camps >= 2 and min(self.front_hops) == 0
         for i in range(n):
             mag = math.hypot(self.vx[i], self.vy[i])
             ht_t = mag * (1 - 0.7 * self.w[i])
@@ -604,11 +578,12 @@ class Territory:
                 fresh = 1 - 0.6 * self.w[i]          # 疲れた前線は降りきらない
                 ht_t = (1 - fr) * ht_t * REAR_HT_SCALE + fr * max(ht_t, FRONT_HT * fresh)
                 tl_t = (1 - fr) * tl_t + fr * max(tl_t, FRONT_TILT * fresh)
-            _h0 = self.ht[i]
+            if self.defeat[i] > 0.0:
+                # 負けた筒は真っ先に天井へ退き、うつむかずに目を逸らす
+                dk = min(1.0, self.defeat[i] * 1.5)
+                ht_t = ht_t * (1 - dk)
+                tl_t = tl_t * (1 - dk) + (-0.6) * dk
             self.ht[i] += (ht_t - self.ht[i]) * (1 - math.exp(-dt / 2.0))
-            if _h0 <= LAND_HT < self.ht[i] and self.t - self._last_land[i] > LAND_COOLDOWN:
-                self.lands.append(i)
-                self._last_land[i] = self.t
             self.tilt[i] += (tl_t - self.tilt[i]) * (1 - math.exp(-dt / 1.5))
 
         # emergent camps with membership (opinion-space clustering)
@@ -633,45 +608,19 @@ class Territory:
             clusters.append(cur)
         self.clusters = clusters
         self.camps = len(clusters)
-        # 社会の状態: 'split'(2陣営に結晶化) / 'consensus'(斉一) / 'chaos'
-        sz = sorted((len(c) for c in clusters), reverse=True) + [0, 0]
-        if sz[0] >= CONSENSUS_SHARE * n:
-            self.state_now = 'consensus'
-        elif sz[1] >= SPLIT_MIN and sz[0] + sz[1] >= SPLIT_SHARE * n:
-            self.state_now = 'split'
-        else:
-            self.state_now = 'chaos'
 
-        # 揺さぶり(挑発)のタイマーは廃止 (アルゴリズム版)。寝返りは①で自然に起きる
+        # 揺さぶり: during a standoff someone always tries something
         self.prov_event = None
-
-        # 陣営の乗り換え(寝返り)を検出: 陣営の代表方向が大きく変わった筒
-        self.converts = []
-        camp_of = [-1] * n
-        sig = [None] * n
-        for ci, cl in enumerate(clusters):
-            cxs = sum(self.vx[i] for i in cl) / len(cl)
-            cys = sum(self.vy[i] for i in cl) / len(cl)
-            for i in cl:
-                camp_of[i] = ci
-                sig[i] = math.atan2(cys, cxs)
-        for i in range(n):
-            # 寝返り = 陣営に属したまま、所属陣営の方向が120°以上変わった
-            if (sig[i] is not None and self.camp_sig[i] is not None and self.cryst
-                    and abs(angd(sig[i], self.camp_sig[i])) > 2.1
-                    and math.hypot(self.vx[i], self.vy[i]) > 0.45
-                    and self.t - self._last_conv[i] > 5.0):     # 前線での行ったり来たりは数えない
-                self.converts.append((i, self.camp_sig[i], sig[i]))
-                self._last_conv[i] = self.t
-                self.next_say[i] = self.t          # 寝返った筒は声を上げる
-            if sig[i] is not None and math.hypot(self.vx[i], self.vy[i]) > 0.45:
-                self.camp_sig[i] = sig[i]
-        self.camp_of = camp_of
+        if self.camps >= 2 and self.t >= self.next_prov:
+            self.prov_event = self.do_provocation()
+            self.next_prov = self.t + 4.0 + min(20.0, self.rng.expovariate(1.0 / 7.0))
+        elif self.camps < 2:
+            self.next_prov = max(self.next_prov, self.t + 3.0)
 
         # rear-echelon dimming: the front keeps its light, the hinterland
         # fades as the standoff hardens (rig follows stale_time, 1 step behind)
         rig = min(1.0, self.stale_time / 30.0)
-        front_now = self._front_agents() if self.cryst else []
+        front_now = self._front_agents() if self.camps >= 2 else []
         if front_now:
             dist = [99] * n
             queue = list(front_now)
@@ -694,14 +643,32 @@ class Territory:
                 bt = 1.0 - 0.8 * rig * min(1.0, self.front_dist[i] * 0.35)
             else:
                 bt = 1.0
-            bt *= 1.0 - FATIGUE_DIM * self.w[i] * self.w[i]    # 疲れた筒は暗くなる
+            if self.defeat[i] > 0.0:
+                bt *= 1.0 - 0.75 * min(1.0, self.defeat[i] * 1.5)   # 負けた筒は暗くなる
             self.brightness[i] += (bt - self.brightness[i]) * (1 - math.exp(-dt / 2.0))
 
-        # 演出タイマー(斉一化→分裂, 膠着→溶解/分裂, 強制分裂)は廃止 (アルゴリズム版)。
-        # 結晶化・溶解は起きたことを検出するだけ (音の合図用)
+        # 押し込み: 前線が降りきった睨み合いが続いたら決着
+        self.break_event = None
+        if front_now and self.camps >= 2:
+            f_ht = sum(self.ht[i] for i in front_now) / len(front_now)
+            if f_ht > BREAK_FRONT_HT and self.t - self.last_break > BREAK_COOLDOWN:
+                self.glare_time += dt
+            else:
+                self.glare_time = max(0.0, self.glare_time - dt)
+            if self.glare_time > self.glare_hold:
+                self.break_event = self.do_breakthrough(front_now)
+                self.glare_time = 0.0
+                self.glare_hold = BREAK_HOLD[0] + self.rng.random() * (BREAK_HOLD[1] - BREAK_HOLD[0])
+        else:
+            self.glare_time = 0.0
+
+        # auto events, 2 triggers x 2 collapse modes:
+        #  trigger 1: sustained uniformity (R/C high) -> always an axis shift
+        #             (the totalitarian phase collapses into a new conflict)
+        #  trigger 2: stalemate pressure (2+ camps for 25-55 s) -> 55% front
+        #             melt (the border liquefies locally), else axis shift
         auto_shifted = False
         self.melt_fired = False
-        self.phase_event = None
         if self.R > 0.85 or self.C > 0.85:
             self.hi_time += dt
         else:
@@ -710,15 +677,33 @@ class Territory:
             self.stale_time += dt
         else:
             self.stale_time = max(0.0, self.stale_time - 2.0 * dt)
-        want = self.state_now == 'split'
-        if want != self.cryst:
-            self._cryst_t += dt
-            if self._cryst_t > (CRYST_ENTER if want else CRYST_EXIT):
-                self.cryst = want
-                self._cryst_t = 0.0
-                self.phase_event = 'crystallize' if want else 'dissolve'
-        else:
-            self._cryst_t = 0.0
+        # NOTE: no exogenous axis jump (full re-randomization) during the run —
+        # that colorful chaos is reserved for the scene's opening moment.
+        # Everything after grows continuously out of the existing color world:
+        # front melt, or majority schism.
+        if (self.auto_shift and not self.schism_active
+                and self.t - self.last_shift > 12.0):
+            if self.hi_time > 8.0:
+                # consensus is the seedbed of schism: unanimity factionalizes
+                self.hi_time = 0.0
+                if not self.begin_schism():
+                    self.begin_schism(min_size=3)
+            elif self.stale_time > self.stale_limit:
+                # broken stalemate: melt 60% / majority schism 40%
+                if self.rng.random() < 0.6:
+                    if not self.do_melt():
+                        self.begin_schism()
+                    else:
+                        self.melt_fired = True
+                else:
+                    if not self.begin_schism():
+                        if self.do_melt():
+                            self.melt_fired = True
+            elif self.t - self.last_shift > 120.0:
+                # deadlock guard: force a schism even in a small camp
+                if not self.begin_schism(min_size=3):
+                    if self.do_melt():
+                        self.melt_fired = True
         return ticks, auto_shifted
 
     def utterances(self):
@@ -817,18 +802,9 @@ class Sender:
         if m.melt_fired:
             self.client.melt()
             self.log("前線溶解: 境界が液状化していく")
-        if m.phase_event == 'crystallize':
-            pcs = m.camp_pcs()
-            if pcs:
-                self.client.braam(*pcs)
-            self.log(f"結晶化: {m.camps}陣営に割れた")
-        elif m.phase_event == 'dissolve':
-            self.client.melt()
-            self.log("溶解: 陣営がほどけてカオスへ")
-        for i in m.lands:
-            self.client.land(i, m.op_unwrap[i])
-        for i, _a, _b in m.converts:
-            self.log("寝返り: 筒%dが相手陣営へ" % (i + 1))
+        if m.break_event:
+            self.client.split(1)
+            self.log(f"押し込み: 前線{m.break_event[1]}体が押し勝ち、{m.break_event[2]}体が退いて塗り替わる")
         if m.prov_event:
             kind, idx = m.prov_event
             self.log(("挑発: 筒%dが突出" if kind == 'lunge'
