@@ -62,6 +62,7 @@ var robots = robotsFile["robots"].collect { |r|
 // ---------------- layer gains (tune here) ----------------
 ~droneGain = 0.16;
 ~sayGain   = 0.55;
+~sayDurScale = 0.5; // しゃべり層の1音の長さの倍率 (モデルは0.4〜2.8秒を出す。2026-09-24: 長すぎ→0.5)
 ~tickGain  = 0.0;   // ノック層は休眠中(声の指向性に置換、戻すなら0.5)
 ~massGain  = 0.4;
 ~shiftGain = 0.5;
@@ -78,7 +79,17 @@ s.options.numInputBusChannels = 0;
 ~outDevice = audioCfg["output_device"];
 if(~outDevice.notNil and: { ~outDevice.asString != "" }) {
 	s.options.outDevice = ~outDevice.asString;
+	// 入力は使わないが、未指定だとシステム既定入力(MOTU/RME)を開いてMaxと取り合うので同じデバイスに
+	s.options.inDevice = ~outDevice.asString;
 	("output device: " ++ ~outDevice).postln;
+};
+// サンプルレート(config.json "sample_rate")。null=デバイス任せ。
+// Maxのアグリゲートと揃える(ずれるとBlackHoleのレートが途中で切り替わる)
+// 環境変数 TERR_SAMPLE_RATE があればそちらを優先(start_territory_sound.sh 44100 で設定される)
+~sr = "TERR_SAMPLE_RATE".getenv ? audioCfg["sample_rate"];
+if(~sr.notNil) {
+	s.options.sampleRate = ~sr.asFloat;
+	("sample rate: " ++ s.options.sampleRate).postln;
 };
 
 s.waitForBoot {
@@ -474,7 +485,7 @@ s.waitForBoot {
 
 	OSCdef(\terrSay, { |msg|
 		var i    = msg[1].asInteger;
-		var dur  = msg[2].asFloat.clip(0.1, 6);
+		var dur  = (msg[2].asFloat * ~sayDurScale).clip(0.1, 6);
 		var amp  = msg[3].asFloat.clip(0, 1);
 		var op   = msg[4].asFloat;
 		var conv = msg[5].asFloat.clip(0, 1);

@@ -3,6 +3,8 @@
 #
 #   ./start_territory_sound.sh          # エンジン起動(既存があれば入れ替え)
 #   ./start_territory_sound.sh stop     # 停止
+#   ./start_territory_sound.sh 44100    # サンプルレートを指定して起動(このときだけ config の sample_rate を上書き)
+#                                       # IFなしでBluetoothイヤフォン(44.1kHzのみ)で試すとき用。Maxも同じレートに
 #
 # 封じ込めている落とし穴:
 #  - sclangをkillするとscsynthが孤児で残りUDP 57120を掴む
@@ -35,6 +37,12 @@ if [ "${1:-}" = "stop" ]; then
   stop_engine
   echo "territory engine stopped."
   exit 0
+fi
+
+# 引数が数字ならサンプルレート上書き
+if [[ "${1:-}" == <-> ]]; then
+  export TERR_SAMPLE_RATE="$1"
+  echo "sample rate override: $TERR_SAMPLE_RATE"
 fi
 
 stop_engine

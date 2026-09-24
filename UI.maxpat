@@ -2399,14 +2399,14 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 213.0, 15.0, 920.0, 22.0 ],
-					"text" : "clear, append マニュアルモード, append 魚群, append 天上天下モード, append 回る天井, append 向き合う, append ホタル, append \"The two of us\", append 見えない蝶々"
+					"text" : "clear, append マニュアルモード, append 魚群, append 天上天下モード, append 回る天井, append 向き合う, append ホタル, append \"The two of us\", append 見えない蝶々, append 陣取りモード"
 				}
 
 			}
 , 			{
 				"box" : 				{
 					"id" : "obj-17",
-					"items" : [ "マニュアルモード", ",", "魚群", ",", "天上天下モード", ",", "回る天井", ",", "向き合う", ",", "ホタル", ",", "The two of us", ",", "見えない蝶々" ],
+					"items" : [ "マニュアルモード", ",", "魚群", ",", "天上天下モード", ",", "回る天井", ",", "向き合う", ",", "ホタル", ",", "The two of us", ",", "見えない蝶々", ",", "陣取りモード" ],
 					"maxclass" : "umenu",
 					"numinlets" : 1,
 					"numoutlets" : 3,
