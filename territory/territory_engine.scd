@@ -62,9 +62,11 @@ var robots = robotsFile["robots"].collect { |r|
 // ---------------- layer gains (tune here) ----------------
 ~droneGain = 0.16;
 ~sayGain   = 0.55;
-~tickGain  = 0.5;
+~tickGain  = 0.0;   // ノック層は休眠中(声の指向性に置換、戻すなら0.5)
 ~massGain  = 0.4;
 ~shiftGain = 0.5;
+~meltGain  = 0.4;
+~splitGain = 0.45;
 ~revMix    = 0.5;
 ~baseMidi  = 39;    // register 0 root; registers at +0 / +12 / +24
 
@@ -79,6 +81,7 @@ s.waitForBoot {
 	~htBus   = Bus.control(s, ~nBots);  // height 0..1
 	~tiltBus = Bus.control(s, ~nBots);  // tilt -1..1
 	~omBus   = Bus.control(s, ~nBots);  // |yaw vel| rad/s
+	~faceBus = Bus.control(s, ~nBots);  // 0..1 head points at the audience
 
 	~rBus      = Bus.control(s, 1);     // heading order parameter R
 	~cBus      = Bus.control(s, 1);     // opinion coherence C
@@ -90,6 +93,7 @@ s.waitForBoot {
 
 	~convBus.setn(0.0 ! ~nBots);
 	~htBus.setn(0.5 ! ~nBots);
+	~faceBus.setn(0.5 ! ~nBots);
 	~gainBus.set(masterDb);
 	~lastHt = 0.5 ! ~nBots;
 
@@ -98,7 +102,7 @@ s.waitForBoot {
 		|out = 0, idx = 0, reg = 0, baseMidi = 39,
 		wFL = 0.25, wFR = 0.25, wRL = 0.25, wRR = 0.25,
 		opBus = 0, convBus = 0, fatBus = 0, htBus = 0, tiltBus = 0, omBus = 0,
-		cBus = 0, droneGain = 0.16|
+		faceBus = 0, cBus = 0, droneGain = 0.16|
 
 		var op   = In.kr(opBus + idx);
 		var conv = Lag.kr(In.kr(convBus + idx), 0.25).clip(0, 1);
@@ -106,6 +110,9 @@ s.waitForBoot {
 		var ht   = Lag.kr(In.kr(htBus + idx), 0.5).clip(0, 1);
 		var tilt = Lag.kr(In.kr(tiltBus + idx), 0.5).clip(-1, 1);
 		var om   = Lag.kr(In.kr(omBus + idx).abs, 0.15);
+		// voice directivity: the head is a beam — facing the audience the
+		// voice opens, turned away it veils. rotation = the beam sweeping.
+		var face = Lag.kr(In.kr(faceBus + idx), 0.1).clip(0, 1);
 
 		// opinion angle -> circle-of-fifths pitch class, quantized then lagged:
 		// the lag in midi space is the glissando between chord tones
@@ -141,43 +148,62 @@ s.waitForBoot {
 		var metS  = (SinOsc.ar(f1, SinOsc.ar(f1 * 2.41, 0, 2.5))
 		           + SinOsc.ar(f2, SinOsc.ar(f2 * 2.39, 0, 2.5))) * 0.3;
 
-		var body = (((sawS * wRd) + (sqrS * wGn) + (pureS * wBl) + (metS * wMg))
-			/ wSum) + (SinOsc.ar(freq * 0.5) * 0.3);
+		// spectral handover: each timbre owns a HPF swept by its hue weight —
+		// a rising timbre descends from the opened top (shimmer first, body
+		// later), a fading one thins upward into air. mid-morph both sit
+		// half-open, so the transition itself is audible as a filter gesture.
+		var body = ((
+			  (HPF.ar(sawS,  wRd.linexp(0, 1, 9000, 80)) * wRd)
+			+ (HPF.ar(sqrS,  wGn.linexp(0, 1, 9000, 80)) * wGn)
+			+ (HPF.ar(pureS, wBl.linexp(0, 1, 9000, 80)) * wBl)
+			+ (HPF.ar(metS,  wMg.linexp(0, 1, 9000, 80)) * wMg)
+		) / wSum) + (SinOsc.ar(freq * 0.5) * 0.3);
 		var tremor = 1 - (fat * 0.45 * LFNoise2.kr(5.5).range(0, 1));
+
+		// a tube whose opinion is in motion hums audibly while it transforms,
+		// so the sweep is foregrounded exactly when the color slides
+		var trans = LagUD.kr((Slope.kr(Lag.kr(op, 0.15)).abs / 1.5).clip(0, 1),
+			0.1, 1.5);
 
 		// conviction opens the filter; tilt down projects, tilt up muffles;
 		// height = proximity (descended tubes are closer to the audience)
 		var cutoff = (300 * (2 ** (conv * 2.3))
 			* ht.linlin(0, 1, 0.85, 1.3)
-			* (1 + (0.7 * tilt.max(0)))).clip(120, 9000);
+			* (1 + (0.7 * tilt.max(0)))
+			* face.linlin(0, 1, 0.75, 1.3)).clip(120, 9000);
 		var tone   = RLPF.ar(body, cutoff, 0.55);
 
 		// below ~0.3 conviction the voice dissolves into breath
 		var voiced = conv.linlin(0.05, 0.45, 0, 1).clip(0, 1);
 		var breath = BPF.ar(PinkNoise.ar, (freq * 2).clip(150, 2500), 0.35) * 2.2;
 
-		// rotation is audible as moving air
+		// rotation is audible as the beam of air sweeping past the audience
 		var swish  = BPF.ar(WhiteNoise.ar, 750 * ht.linlin(0, 1, 0.8, 1.3), 1.2)
-		             * om.linlin(0.15, 2.5, 0, 0.4).clip(0, 0.4);
+		             * om.linlin(0.15, 2.5, 0, 0.4).clip(0, 0.4)
+		             * face.linlin(0, 1, 0.4, 1.0);
 
 		var amp = (conv ** 1.3).linlin(0, 1, 0.05, 1.0)
 			* ht.linlin(0, 1, 0.45, 1.25)
 			* (1 - (0.35 * tilt.neg.max(0)))
+			* face.linlin(0, 1, 0.65, 1.2)
 			* tremor;
 
-		// drones stay almost silent as individuals — the sustained mass only
-		// blooms as the room approaches unanimity (C high). speech lives in \terrSay.
+		// drones stay almost silent as individuals — they surface when the
+		// room approaches unanimity (C high) OR while this tube's color is
+		// actively sliding (trans), so the spectral morph is heard in motion
 		var cGlob = Lag.kr(In.kr(cBus), 1.0).clip(0, 1);
+		var gate = (0.08 + (0.92 * cGlob * cGlob)).max(0.65 * trans);
 		var sig = ((tone * voiced) + (breath * (1 - voiced) * 0.7) + swish)
-			* amp * droneGain * (0.08 + (0.92 * cGlob * cGlob));
+			* amp * droneGain * gate;
 		Out.ar(out, sig * [wFL, wFR, wRL, wRR]);
 	}).add;
 
 	// ---------------- speech layer: a tube takes the floor for a phrase ----------------
 	SynthDef(\terrSay, {
 		|out = 0, dur = 1, amp = 0.5, op = 0, conv = 0.7, fat = 0,
-		ht = 0.5, tilt = 0, reg = 0, baseMidi = 39,
+		ht = 0.5, tilt = 0, reg = 0, baseMidi = 39, idx = 0, faceBus = 0,
 		wFL = 0.25, wFR = 0.25, wRL = 0.25, wRR = 0.25, sayGain = 0.55|
+		var face = Lag.kr(In.kr(faceBus + idx), 0.1).clip(0, 1);
 
 		var p    = op / 2pi * 12;
 		var pc   = (p.round.mod(12) * 7).mod(12);
@@ -206,18 +232,40 @@ s.waitForBoot {
 		var pureS = (SinOsc.ar(f1) + SinOsc.ar(f2)) * 0.42;
 		var metS  = (SinOsc.ar(f1, SinOsc.ar(f1 * 2.41, 0, 2.5))
 		           + SinOsc.ar(f2, SinOsc.ar(f2 * 2.39, 0, 2.5))) * 0.3;
-		var body = ((sawS * wRd) + (sqrS * wGn) + (pureS * wBl) + (metS * wMg)) / wSum;
+		// same spectral placement as the drones: intermediate hues speak
+		// with the half-open, airy top of the morph
+		var body = ((
+			  (HPF.ar(sawS,  wRd.linexp(0, 1, 9000, 80)) * wRd)
+			+ (HPF.ar(sqrS,  wGn.linexp(0, 1, 9000, 80)) * wGn)
+			+ (HPF.ar(pureS, wBl.linexp(0, 1, 9000, 80)) * wBl)
+			+ (HPF.ar(metS,  wMg.linexp(0, 1, 9000, 80)) * wMg)
+		) / wSum);
 
 		var cutoff = (300 * (2 ** (conv * 2.3))
 			* ht.linlin(0, 1, 0.85, 1.3)
-			* (1 + (0.7 * tilt.max(0)))).clip(120, 9000);
+			* (1 + (0.7 * tilt.max(0)))
+			* face.linlin(0, 1, 0.75, 1.3)).clip(120, 9000);
 		var env  = EnvGen.kr(
 			Env.linen(0.05, (dur - 0.2).max(0.05), 0.15, 1, \sine),
 			doneAction: 2);
 		var trem = 1 - (fat * 0.5 * LFNoise2.kr(6).range(0, 1));
 
-		var sig = RLPF.ar(body, cutoff, 0.6)
-			* env * trem * amp * sayGain * ht.linlin(0, 1, 0.5, 1.25);
+		// attack flair, two entrances by timbre brightness:
+		//   bright voices (saw/square/FM) fall in through a highpass —
+		//   air first, body lands after;
+		//   dark voices (sine/blue) rise in through a lowpass —
+		//   rumble first, opening upward.
+		// convinced voices land almost at once, hesitant ones drift.
+		var swDur   = 0.12 + (0.4 * (1 - conv));
+		var hpSweep = XLine.kr(6500, 60, swDur);
+		var lpSweep = XLine.kr(90, 7500, swDur);
+		var bF      = wBl / wSum;   // blue share = low-harmonic voice
+		var toned   = RLPF.ar(body, cutoff, 0.6);
+
+		var sig = ((RHPF.ar(toned, hpSweep, 0.45) * (1 - bF))
+		         + (RLPF.ar(toned, lpSweep, 0.45) * bF))
+			* env * trem * amp * sayGain * ht.linlin(0, 1, 0.5, 1.25)
+			* face.linlin(0, 1, 0.65, 1.2);
 		Out.ar(out, sig * [wFL, wFR, wRL, wRR]);
 	}).add;
 
@@ -254,6 +302,36 @@ s.waitForBoot {
 		        + (VarSaw.ar(f * 2.001, 0, 0.4) * 0.12);
 		sig = LPF.ar(sig, 500) * Lag.kr(uni, 0.8) * massGain;
 		Out.ar(out, sig * 0.28 ! 4);
+	}).add;
+
+	// ---------------- melt gesture: the border liquefies (no boom) ----------------
+	SynthDef(\terrMelt, { |out = 0, amp = 0.4|
+		var env  = EnvGen.kr(Env([0, 1, 0.55, 0], [1.8, 4.0, 4.2], \sine));
+		var wash = BPF.ar(PinkNoise.ar, XLine.kr(2200, 260, 10), 0.5) * 2.2;
+		var drip = SinOsc.ar(
+			LFNoise2.kr(0.7).exprange(180, 900) * XLine.kr(1, 0.6, 10)) * 0.12;
+		var sig  = (wash + drip) * env * amp;
+		Line.kr(0, 0, 10.5, doneAction: 2);
+		Out.ar(out, sig * 0.25 ! 4);
+	}).add;
+
+	// ---------------- schism gesture: creak (phase 0) / crack (phase 1) ----------------
+	SynthDef(\terrSplit, { |out = 0, amp = 0.45, phase = 1|
+		// dry fracture, no pitched sweep (a falling Ringz reads as a tom)
+		var isCrack = phase > 0.5;
+		var t = Impulse.ar(0);
+		var snap     = HPF.ar(WhiteNoise.ar, 1800) * Decay2.ar(t, 0.001, 0.06) * 3;
+		var crackle  = HPF.ar(WhiteNoise.ar, 900)
+		               * Decay2.ar(Dust.ar(28) * Line.kr(1, 0, 0.9), 0.0005, 0.03)
+		               * 2.2;
+		var splinter = Ringz.ar(t, 1400, 0.04) * 0.25;
+		var crack = (snap + crackle + splinter) * isCrack;
+		var creak = LPF.ar(Saw.ar(LFNoise2.kr(3).exprange(48, 130)), 380)
+		            * EnvGen.kr(Env([0, 0.5, 0], [1.4, 2.2], \sine))
+		            * 0.5 * (1 - isCrack);
+		var sig = (crack + creak) * amp;
+		Line.kr(0, 0, 3.8, doneAction: 2);
+		Out.ar(out, sig * 0.25 ! 4);
 	}).add;
 
 	// ---------------- shift gesture ----------------
@@ -309,7 +387,7 @@ s.waitForBoot {
 			\wFL, ~panW[i][0], \wFR, ~panW[i][1], \wRL, ~panW[i][2], \wRR, ~panW[i][3],
 			\opBus, ~opBus, \convBus, ~convBus, \fatBus, ~fatBus,
 			\htBus, ~htBus, \tiltBus, ~tiltBus, \omBus, ~omBus,
-			\cBus, ~cBus, \droneGain, ~droneGain
+			\faceBus, ~faceBus, \cBus, ~cBus, \droneGain, ~droneGain
 		], ~srcGroup, \addToTail)
 	};
 
@@ -359,6 +437,11 @@ s.waitForBoot {
 		if(v.size == ~nBots) { ~omBus.setn(v) };
 	}, '/terr/om');
 
+	OSCdef(\terrFace, { |msg|
+		var v = msg[1..].collect(_.asFloat);
+		if(v.size == ~nBots) { ~faceBus.setn(v) };
+	}, '/terr/face');
+
 	OSCdef(\terrGlobal, { |msg|
 		~rBus.set(msg[1].asFloat.clip(0, 1));
 		~cBus.set(msg[2].asFloat.clip(0, 1));
@@ -395,6 +478,7 @@ s.waitForBoot {
 				\out, ~mainBus, \dur, dur, \amp, amp, \op, op,
 				\conv, conv, \fat, fat, \ht, ht, \tilt, tilt,
 				\reg, i % 3, \baseMidi, ~baseMidi,
+				\idx, i, \faceBus, ~faceBus,
 				\wFL, ~panW[i][0], \wFR, ~panW[i][1],
 				\wRL, ~panW[i][2], \wRR, ~panW[i][3],
 				\sayGain, ~sayGain
@@ -406,6 +490,21 @@ s.waitForBoot {
 		Synth.new(\terrShift, [\out, ~mainBus, \amp, ~shiftGain],
 			~srcGroup, \addToTail);
 	}, '/terr/shift');
+
+	OSCdef(\terrMelt, { |msg|
+		Synth.new(\terrMelt, [\out, ~mainBus, \amp, ~meltGain],
+			~srcGroup, \addToTail);
+	}, '/terr/melt');
+
+	OSCdef(\terrSplit, { |msg|
+		// phase 1 (secession crack) is intentionally SILENT — the event is
+		// carried by the glissandi + spectral morph + drone surge alone.
+		// only the soft phase-0 creak (faction forming) makes a sound.
+		if(msg[1].asInteger == 0) {
+			Synth.new(\terrSplit, [\out, ~mainBus, \amp, ~splitGain,
+				\phase, 0], ~srcGroup, \addToTail);
+		};
+	}, '/terr/split');
 
 	OSCdef(\terrScene, { |msg|
 		~outSynth.set(\gateLevel, if(msg[1].asInteger > 0, 1, 0));

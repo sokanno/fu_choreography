@@ -36,6 +36,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 TWO_PI = 2 * math.pi
 FRAME_HZ = 20
+# 観客側(正面)の方位角(rad, world座標系)。NMWの正面が合わない場合はここを回す
+FRONT_ANGLE = 0.0
 GLOBAL_EVERY = 4          # send /terr/global every N frames (5 Hz)
 MODEL_TICK = 0.08         # the widget's tick the constants were tuned at
 
@@ -83,13 +85,13 @@ class Territory:
         self.auto_shift = True
         # model constants (per 0.08 s tick)
         self.k_att = 4.0    # attention sharpness
-        self.eps = 0.9      # bounded confidence
+        self.eps = 0.65     # bounded confidence (0.9だと陣営が合流して斉一化しやすい)
         self.mu = 0.2       # conformity
         self.alpha = 0.12   # radicalization
         self.gam = 0.12     # fatigue pull to center
-        self.beta = 0.02    # global homeostasis
+        self.beta = 0.05    # global homeostasis (多数派への逆風=均衡を保つ負帰還)
         self.fr = 0.006     # fatigue rate
-        self.kap = 0.02     # trait anchor
+        self.kap = 0.035    # trait anchor (素質が多数派に飲まれにくく)
         self.eta = 0.03     # opinion noise
         self.drift = 0.001  # axis drift rad/tick
         self.reset()
@@ -122,7 +124,32 @@ class Territory:
         self.C = 0.0
         self.camps = 0
         self.hi_time = 0.0
-        self.last_shift = -999.0
+        self.stale_time = 0.0
+        self.stale_limit = 25.0 + self.rng.random() * 30.0
+        self.melt = [0.0] * n
+        self.melt_fired = False
+        self.melt_active_until = -1.0
+        self._melt_cap = [1.0] * n       # spatial attenuation from the melt seed
+        # last_shift starts at 0 (not -inf): the deadlock guard must not fire
+        # into the opening chaos before the first camps have even formed
+        self.last_shift = 0.0
+        self.prov = [0.0] * n            # provocation intensity per tube
+        self.next_prov = 6.0 + self.rng.random() * 8.0
+        self.prov_event = None           # ('lunge'|'defect', idx) this step
+        self.clusters = []               # camp membership (filled each step)
+        self.schism_side = [0.0] * n     # ±1 faction inside the splitting camp
+        self.schism_active = False
+        self.schism_t0 = 0.0
+        self.schism_perp = 0.0
+        self.schism_event = None         # ('begin',size)|('secede',)|('fizzle',)
+        self.split_count = 0
+        self._deaf = 0.0                 # cross-faction deafness during schism
+        self._fizzle_streak = 0
+        self.schism_mild = False         # 小派閥: grumbling that usually settles
+        self._mild_dur = 0.0
+        self.kap2 = 0.010                # 個性の常時圧: pull toward own 2D trait
+        self.front_dist = [0] * n        # graph hops from the nearest front tube
+        self.brightness = [1.0] * n      # rear echelons dim as the standoff hardens
         self.t = 0.0
         self.shift_count = 0
 
@@ -131,14 +158,193 @@ class Territory:
         jump *= 1 if self.rng.random() < 0.5 else -1
         self.psi += jump
         for i in range(self.n):
-            self.vx[i] *= 0.3
-            self.vy[i] *= 0.3
+            self.vx[i] *= 0.45
+            self.vy[i] *= 0.45
             self.w[i] *= 0.5
             self.spin[i] = 1 if self.rng.random() < 0.5 else -1
             self.om[i] = self.spin[i] * (0.5 + self.rng.random()) * max(self.scan, 0.04)
         self.last_shift = self.t
         self.shift_count += 1
+        self.stale_time = 0.0
+        self.stale_limit = 25.0 + self.rng.random() * 30.0
         return jump
+
+    def do_melt(self):
+        """Front-line melt: pick one spot on the front and let the boundary
+        liquefy from there (contagious via step()). Returns False if there is
+        no front to melt."""
+        front = []
+        for i in range(self.n):
+            for j in self.nbr[i]:
+                if math.hypot(self.vx[i] - self.vx[j],
+                              self.vy[i] - self.vy[j]) > 1.0:
+                    front.append(i)
+                    break
+        if not front:
+            return False
+        seed = self.rng.choice(front)
+        self.melt[seed] = 0.8
+        for j in self.nbr[seed]:
+            if j in front:
+                self.melt[j] = max(self.melt[j], 0.45)
+        # spatial attenuation: the liquefaction stays a local incident
+        # (~3 rings around the seed), never a whole-floor dissolution
+        hops = [99] * self.n
+        hops[seed] = 0
+        queue = [seed]
+        qi = 0
+        while qi < len(queue):
+            a = queue[qi]
+            qi += 1
+            for b in self.nbr[a]:
+                if hops[b] > hops[a] + 1:
+                    hops[b] = hops[a] + 1
+                    queue.append(b)
+        self._melt_cap = [max(0.0, 1.0 - 0.28 * h) for h in hops]
+        # contagion only lives for a bounded window, then the border heals —
+        # without this the epidemic self-sustains and the society never reforms
+        self.melt_active_until = self.t + 8.0 + self.rng.random() * 5.0
+        self.last_shift = self.t          # shares the cooldown
+        self.stale_time = 0.0
+        self.stale_limit = 25.0 + self.rng.random() * 30.0
+        return True
+
+    def _front_agents(self):
+        front = []
+        for i in range(self.n):
+            for j in self.nbr[i]:
+                if math.hypot(self.vx[i] - self.vx[j],
+                              self.vy[i] - self.vy[j]) > 1.0:
+                    front.append(i)
+                    break
+        return front
+
+    def do_provocation(self):
+        """揺さぶり: during a standoff someone always tries something.
+        lunge  — a convinced front tube surges (conviction burst, speaks at
+                 once, the opposing neighbors sharpen in response)
+        defect — a weak/tired front tube flips to the other side"""
+        front = self._front_agents()
+        if not front:
+            return None
+        conv = {i: math.hypot(self.vx[i], self.vy[i]) for i in front}
+        roll = self.rng.random()
+        if roll < 0.4 and not self.schism_active:
+            # 小派閥: the majority starts grumbling — a gradient opens inside
+            # its color and usually settles; a loose camp can tip into a real
+            # secession by accident
+            if self.begin_schism(min_size=5, mild=True):
+                return None
+            roll = 0.4 + self.rng.random() * 0.6
+        if roll < 0.7:
+            cands = [i for i in front if conv[i] > 0.5]
+            if not cands:
+                return None
+            i = self.rng.choice(cands)
+            self.prov[i] = 1.0
+            for j in self.nbr[i]:
+                if math.hypot(self.vx[i] - self.vx[j],
+                              self.vy[i] - self.vy[j]) > 1.0:
+                    self.prov[j] = max(self.prov[j], 0.5)
+            self.next_say[i] = self.t    # the lunge speaks immediately
+            return ('lunge', i)
+        else:
+            cands = [i for i in front if conv[i] < 0.5 or self.w[i] > 0.5]
+            if not cands:
+                return None
+            i = self.rng.choice(cands)
+            self.vx[i] *= -0.55
+            self.vy[i] *= -0.55
+            self.w[i] *= 0.5
+            self.spin[i] = 1 if self.rng.random() < 0.5 else -1
+            self.next_say[i] = self.t    # the defector announces itself
+            return ('defect', i)
+
+    def begin_schism(self, min_size=6, mild=False):
+        """多数派分裂の始まり: factions form inside the largest camp along its
+        latent (orthogonal) axis, sides chosen by each member's hidden trait.
+        No jump — a growing factional pull first paints a gradient inside the
+        camp's color; once the separation beats the confidence bound ε the
+        subgroups stop hearing each other and secede on their own (handled in
+        step()); if conformity wins instead, the schism fizzles (和解)."""
+        if self.schism_active or not self.clusters:
+            return False
+        big = max(self.clusters, key=len)
+        if len(big) < min_size:
+            return False
+        mvx = sum(self.vx[i] for i in big) / len(big)
+        mvy = sum(self.vy[i] for i in big) / len(big)
+        perp = math.atan2(mvy, mvx) + math.pi / 2 + self.rng.uniform(-0.3, 0.3)
+        px_, py_ = math.cos(perp), math.sin(perp)
+        self.schism_side = [0.0] * self.n
+        for i in big:
+            tp = self.tx0[i] * px_ + self.ty0[i] * py_
+            if abs(tp) < 0.1:
+                self.schism_side[i] = 1.0 if self.rng.random() < 0.5 else -1.0
+            else:
+                self.schism_side[i] = 1.0 if tp > 0 else -1.0
+        self.schism_active = True
+        self.schism_mild = mild
+        self.schism_t0 = self.t
+        self.schism_perp = perp
+        if mild:
+            # texture, not resolution: keep stalemate pressure running
+            self._mild_dur = 12.0 + self.rng.random() * 10.0
+            self.schism_event = ('grumble', len(big))
+        else:
+            self.last_shift = self.t
+            self.stale_time = 0.0
+            self.schism_event = ('begin', len(big))
+        return True
+
+    def _schism_update(self, f):
+        """Escalating factional pull; detect secession or reconciliation."""
+        px_, py_ = math.cos(self.schism_perp), math.sin(self.schism_perp)
+        age = self.t - self.schism_t0
+        # mild grumbling pulls weakly and never escalates; a real schism does
+        g = 0.006 if self.schism_mild else (0.014 + 0.0015 * age)
+        ax = ay = an = bx = by = bn = 0.0
+        for i in range(self.n):
+            s = self.schism_side[i]
+            if s == 0.0:
+                continue
+            self.vx[i] += f * g * s * px_
+            self.vy[i] += f * g * s * py_
+            nm = math.hypot(self.vx[i], self.vy[i])
+            if nm > 1:
+                self.vx[i] /= nm
+                self.vy[i] /= nm
+            if s > 0:
+                ax += self.vx[i]; ay += self.vy[i]; an += 1
+            else:
+                bx += self.vx[i]; by += self.vy[i]; bn += 1
+        if an == 0 or bn == 0:
+            self.schism_active = False
+            self.schism_event = ('fizzle',)
+            return
+        sep = math.hypot(ax / an - bx / bn, ay / an - by / bn)
+        if sep > 0.9:
+            # secession: the factional rift becomes THE conflict
+            self.psi = self.schism_perp
+            self.schism_active = False
+            self.schism_side = [0.0] * self.n
+            self.split_count += 1
+            self._fizzle_streak = 0
+            self.last_shift = self.t
+            self.stale_limit = 25.0 + self.rng.random() * 30.0
+            self.schism_event = ('secede',)
+        elif self.schism_mild and age > self._mild_dur:
+            # the grumbling settles — shades close back into the party color
+            self.schism_active = False
+            self.schism_side = [0.0] * self.n
+            self.schism_event = ('settle',)
+        elif (not self.schism_mild) and age > 40.0:
+            # conformity held: the party closes ranks
+            self.schism_active = False
+            self.schism_side = [0.0] * self.n
+            self._fizzle_streak += 1
+            self.last_shift = self.t
+            self.schism_event = ('fizzle',)
 
     def step(self, dt):
         """Advance the model. Returns (ticks, auto_shifted): ticks is a list of
@@ -146,6 +352,11 @@ class Territory:
         f = dt / MODEL_TICK
         n = self.n
         self.t += dt
+        self.schism_event = None
+        # factions grow deaf to each other as a REAL schism ages (echo
+        # chambers); mild grumbling stays within earshot
+        self._deaf = (0.6 * min(1.0, (self.t - self.schism_t0) / 20.0)
+                      if (self.schism_active and not self.schism_mild) else 0.0)
         self.psi += self.drift * f
         ex, ey = math.cos(self.psi), math.sin(self.psi)
 
@@ -161,6 +372,10 @@ class Territory:
         for i in range(n):
             pxl = pyl = wsum = 0.0
             t_ali = t_stare = 0.0
+            # melting tubes hear across the front, stop radicalizing and
+            # bleed conviction — the boundary liquefies locally
+            mi = self.melt[i]
+            eps_i = self.eps + 1.2 * mi
             for j in self.nbr[i]:
                 bij = self.bear[i][j]
                 L = ((1 + math.cos(angd(bij, self.th[i]))) / 2) ** self.k_att
@@ -169,7 +384,10 @@ class Territory:
                 dxo = self.vx[j] - self.vx[i]
                 dyo = self.vy[j] - self.vy[i]
                 d = math.hypot(dxo, dyo)
-                if d < self.eps:
+                eff_eps = eps_i
+                if self.schism_side[i] * self.schism_side[j] < 0:
+                    eff_eps *= (1 - self._deaf)
+                if d < eff_eps:
                     pxl += wt * dxo
                     pyl += wt * dyo
                     wsum += wt
@@ -181,24 +399,32 @@ class Territory:
                 pyl = self.mu * pyl / wsum
             m2 = self.vx[i] ** 2 + self.vy[i] ** 2
             mag = math.sqrt(m2)
-            radf = self.alpha * (1 - 2 * self.w[i]) * (1 - m2)
+            radf = self.alpha * (1 - 2 * self.w[i]) * (1 - m2) * (1 - mi)
             tproj = self.tx0[i] * ex + self.ty0[i] * ey
             vproj = self.vx[i] * ex + self.vy[i] * ey
             anch = self.kap * (tproj - vproj)
+            # 個性の常時圧: everyone leans a little toward who they are, so a
+            # camp never fully unifies — its interior keeps a faint gradient
             nx = self.vx[i] + f * (
                 pxl + radf * self.vx[i] - self.gam * self.w[i] * self.vx[i]
+                - 0.08 * mi * self.vx[i]
                 + anch * ex - self.beta * mx
-                + self.rng.uniform(-1, 1) * self.eta
+                + self.kap2 * (self.tx0[i] - self.vx[i])
+                + self.rng.uniform(-1, 1) * self.eta * (1 + 1.5 * mi)
             )
             ny = self.vy[i] + f * (
                 pyl + radf * self.vy[i] - self.gam * self.w[i] * self.vy[i]
+                - 0.08 * mi * self.vy[i]
                 + anch * ey - self.beta * my
-                + self.rng.uniform(-1, 1) * self.eta
+                + self.kap2 * (self.ty0[i] - self.vy[i])
+                + self.rng.uniform(-1, 1) * self.eta * (1 + 1.5 * mi)
             )
-            # damp the off-axis component (the salient axis owns the debate)
+            # damp the off-axis component (the salient axis owns the debate);
+            # schism members are exempt — their revolt IS off-axis
             perp = nx * (-ey) + ny * ex
-            nx -= perp * 0.1 * f * (-ey)
-            ny -= perp * 0.1 * f * ex
+            pdamp = 0.1 * (1 - 0.9 * abs(self.schism_side[i]))
+            nx -= perp * pdamp * f * (-ey)
+            ny -= perp * pdamp * f * ex
             nm = math.hypot(nx, ny)
             if nm > 1:
                 nx /= nm
@@ -206,13 +432,51 @@ class Territory:
             nvx[i], nvy[i] = nx, ny
             self.w[i] = min(1.0, max(0.0, self.w[i] + f * self.fr * (m2 - 0.25)
                                      * (1 + self.unif * self.R * self.C)))
-            engage = max(0.0, mag * (1 - self.w[i]))
+            # a provoked tube surges: conviction pushes outward, gaze locks
+            pi = self.prov[i]
+            if pi > 0.0 and mag > 1e-4:
+                nx += f * 0.14 * pi * self.vx[i] / mag
+                ny += f * 0.14 * pi * self.vy[i] / mag
+                nm = math.hypot(nx, ny)
+                if nm > 1:
+                    nx /= nm
+                    ny /= nm
+                nvx[i], nvy[i] = nx, ny
+            engage = max(0.0, mag * (1 - self.w[i]) * (1 - 0.7 * mi))
+            engage = min(1.0, engage * (1 + pi))
             t_scan = 0.15 * (self.spin[i] * self.scan - self.om[i])
             self.om[i] += f * ((1 - engage) * t_scan + engage * (t_ali + t_stare)
                                + self.rng.uniform(-1, 1) * 0.004)
             self.om[i] *= 0.93 ** f
             self.om[i] = max(-0.15, min(0.15, self.om[i]))
         self.vx, self.vy = nvx, nvy
+
+        # ongoing schism: factional pull, secession / reconciliation check
+        if self.schism_active:
+            self._schism_update(f)
+
+        # provocation decay (~3-4 s)
+        if any(p > 0.0 for p in self.prov):
+            for i in range(n):
+                p = self.prov[i] * (0.985 ** f)
+                self.prov[i] = p if p >= 0.01 else 0.0
+
+        # melt contagion + decay: the liquefaction creeps to neighbors while
+        # the active window lasts, then only heals and the border recrystallizes
+        if any(m > 0.0 for m in self.melt):
+            active = self.t < self.melt_active_until
+            decay = 0.994 if active else 0.988
+            old_melt = self.melt
+            new_melt = old_melt[:]
+            for i in range(n):
+                grown = old_melt[i]
+                if active:
+                    nb = max((old_melt[j] for j in self.nbr[i]), default=0.0)
+                    grown = min(self._melt_cap[i],
+                                grown + f * 0.045 * nb * (1 - grown))
+                grown *= decay ** f
+                new_melt[i] = grown if grown >= 0.003 else 0.0
+            self.melt = new_melt
 
         # yaw integration + half-turn tick detection
         ticks = []
@@ -238,15 +502,15 @@ class Territory:
             self.ht[i] += (ht_t - self.ht[i]) * (1 - math.exp(-dt / 2.0))
             self.tilt[i] += (tl_t - self.tilt[i]) * (1 - math.exp(-dt / 1.5))
 
-        # emergent camp count (same clustering as the widget)
+        # emergent camps with membership (opinion-space clustering)
         used = [False] * n
-        camps = 0
+        clusters = []
         for i in range(n):
             if used[i] or math.hypot(self.vx[i], self.vy[i]) < 0.35:
                 continue
-            camps += 1
-            stack = [i]
+            cur = [i]
             used[i] = True
+            stack = [i]
             while stack:
                 a = stack.pop()
                 for b in range(n):
@@ -256,19 +520,88 @@ class Territory:
                                   self.vy[a] - self.vy[b]) < 0.5:
                         used[b] = True
                         stack.append(b)
-        self.camps = camps
+                        cur.append(b)
+            clusters.append(cur)
+        self.clusters = clusters
+        self.camps = len(clusters)
 
-        # auto-shift: sustained uniformity triggers a new salient axis
+        # 揺さぶり: during a standoff someone always tries something
+        self.prov_event = None
+        if self.camps >= 2 and self.t >= self.next_prov:
+            self.prov_event = self.do_provocation()
+            self.next_prov = self.t + 4.0 + min(20.0, self.rng.expovariate(1.0 / 7.0))
+        elif self.camps < 2:
+            self.next_prov = max(self.next_prov, self.t + 3.0)
+
+        # rear-echelon dimming: the front keeps its light, the hinterland
+        # fades as the standoff hardens (rig follows stale_time, 1 step behind)
+        rig = min(1.0, self.stale_time / 30.0)
+        front_now = self._front_agents() if self.camps >= 2 else []
+        if front_now:
+            dist = [99] * n
+            queue = list(front_now)
+            for i in front_now:
+                dist[i] = 0
+            qi = 0
+            while qi < len(queue):
+                a = queue[qi]
+                qi += 1
+                for b in self.nbr[a]:
+                    if dist[b] > dist[a] + 1:
+                        dist[b] = dist[a] + 1
+                        queue.append(b)
+            self.front_dist = dist
+        else:
+            self.front_dist = [0] * n
+        for i in range(n):
+            if front_now:
+                bt = 1.0 - 0.8 * rig * min(1.0, self.front_dist[i] * 0.35)
+            else:
+                bt = 1.0
+            self.brightness[i] += (bt - self.brightness[i]) * (1 - math.exp(-dt / 2.0))
+
+        # auto events, 2 triggers x 2 collapse modes:
+        #  trigger 1: sustained uniformity (R/C high) -> always an axis shift
+        #             (the totalitarian phase collapses into a new conflict)
+        #  trigger 2: stalemate pressure (2+ camps for 25-55 s) -> 55% front
+        #             melt (the border liquefies locally), else axis shift
         auto_shifted = False
+        self.melt_fired = False
         if self.R > 0.85 or self.C > 0.85:
             self.hi_time += dt
         else:
             self.hi_time = 0.0
-        if (self.auto_shift and self.hi_time > 8.0
+        if self.camps >= 2:
+            self.stale_time += dt
+        else:
+            self.stale_time = max(0.0, self.stale_time - 2.0 * dt)
+        # NOTE: no exogenous axis jump (full re-randomization) during the run —
+        # that colorful chaos is reserved for the scene's opening moment.
+        # Everything after grows continuously out of the existing color world:
+        # front melt, or majority schism.
+        if (self.auto_shift and not self.schism_active
                 and self.t - self.last_shift > 12.0):
-            self.hi_time = 0.0
-            self.do_shift()
-            auto_shifted = True
+            if self.hi_time > 8.0:
+                # consensus is the seedbed of schism: unanimity factionalizes
+                self.hi_time = 0.0
+                if not self.begin_schism():
+                    self.begin_schism(min_size=3)
+            elif self.stale_time > self.stale_limit:
+                # broken stalemate: melt 60% / majority schism 40%
+                if self.rng.random() < 0.6:
+                    if not self.do_melt():
+                        self.begin_schism()
+                    else:
+                        self.melt_fired = True
+                else:
+                    if not self.begin_schism():
+                        if self.do_melt():
+                            self.melt_fired = True
+            elif self.t - self.last_shift > 120.0:
+                # deadlock guard: force a schism even in a small camp
+                if not self.begin_schism(min_size=3):
+                    if self.do_melt():
+                        self.melt_fired = True
         return ticks, auto_shifted
 
     def utterances(self):
@@ -296,6 +629,17 @@ class Territory:
         return out
 
     # --- state vectors for OSC ---
+    def facing(self, front_angle=0.0):
+        """0..1 per tube: how much the head points toward the audience side.
+        Drives the voice directivity (bright when facing, veiled when turned
+        away) — rotation becomes audible as a sweeping beam of voice."""
+        return [(1 + math.cos(self.th[i] - front_angle)) / 2
+                for i in range(self.n)]
+
+    def fat_out(self):
+        """Fatigue as sent to the engine: melting voices also destabilize."""
+        return [min(1.0, self.w[i] + 0.5 * self.melt[i]) for i in range(self.n)]
+
     def conviction(self):
         return [math.hypot(self.vx[i], self.vy[i]) for i in range(self.n)]
 
@@ -353,8 +697,31 @@ class Sender:
         if auto_shifted:
             self.client.shift(True)
             self.log("自動転換: 斉一化が持続、軸が跳躍 (通算%d回目)" % m.shift_count)
+        if m.melt_fired:
+            self.client.melt()
+            self.log("前線溶解: 境界が液状化していく")
+        if m.prov_event:
+            kind, idx = m.prov_event
+            self.log(("挑発: 筒%dが突出" if kind == 'lunge'
+                      else "寝返り: 筒%dが転向") % (idx + 1))
+        if m.schism_event:
+            ev = m.schism_event
+            if ev[0] == 'begin':
+                self.client.split(0)
+                self.log(f"派閥形成: 多数派{ev[1]}体の内部に亀裂")
+            elif ev[0] == 'grumble':
+                self.client.split(0)
+                self.log(f"小派閥: {ev[1]}体の党内に不満がくすぶる")
+            elif ev[0] == 'secede':
+                self.client.split(1)
+                self.log("離脱: 新党が結成され、争点が置き換わった")
+            elif ev[0] == 'settle':
+                self.log("小派閥は収まり、色が閉じていく")
+            else:
+                self.log("分裂回避: 党は結束を取り戻した")
         self.client.send_state(
-            m.op_unwrap, m.conviction(), m.w, m.ht, m.tilt, m.omega_rad_s()
+            m.op_unwrap, m.conviction(), m.fat_out(), m.ht, m.tilt,
+            m.omega_rad_s(), m.facing(FRONT_ANGLE)
         )
         for i, vel in ticks:
             self.client.tick(i, vel, pitch_class(m.op_unwrap[i]))

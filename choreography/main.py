@@ -6143,12 +6143,37 @@ while True:
         terr_says = terr.utterances()
         if terr_auto_shifted:
             print(f"[陣取りモード] 自動転換 (通算{terr.shift_count}回)  R={terr.R:.2f} C={terr.C:.2f}")
+        if terr.melt_fired:
+            print(f"[陣取りモード] 前線溶解  camps={terr.camps} R={terr.R:.2f} C={terr.C:.2f}")
+        if terr.prov_event:
+            _pk, _pi = terr.prov_event
+            print(f"[陣取りモード] {'挑発: 筒%dが突出' % (_pi+1) if _pk=='lunge' else '寝返り: 筒%dが転向' % (_pi+1)}")
+        if terr.schism_event:
+            _se = terr.schism_event
+            if _se[0] == 'begin':
+                print(f"[陣取りモード] 派閥形成: 多数派{_se[1]}体の内部に亀裂")
+            elif _se[0] == 'grumble':
+                print(f"[陣取りモード] 小派閥: {_se[1]}体の党内に不満がくすぶる")
+            elif _se[0] == 'secede':
+                print("[陣取りモード] 離脱: 新党結成、争点が置き換わった")
+            elif _se[0] == 'settle':
+                print("[陣取りモード] 小派閥は収まった")
+            else:
+                print("[陣取りモード] 分裂回避: 党は結束を取り戻した")
         if tclient is not None:
             try:
                 if terr_auto_shifted:
                     tclient.shift(True)
-                tclient.send_state(terr.op_unwrap, terr.conviction(), terr.w,
-                                   terr.ht, terr.tilt, terr.omega_rad_s())
+                if terr.melt_fired:
+                    tclient.melt()
+                if terr.schism_event:
+                    if terr.schism_event[0] in ('begin', 'grumble'):
+                        tclient.split(0)
+                    elif terr.schism_event[0] == 'secede':
+                        tclient.split(1)
+                tclient.send_state(terr.op_unwrap, terr.conviction(), terr.fat_out(),
+                                   terr.ht, terr.tilt, terr.omega_rad_s(),
+                                   terr.facing(0.0))  # 正面方位(rad)。合わなければここを回す
                 for _ti, _vel in terr_ticks:
                     tclient.tick(_ti, _vel, terr_pitch_class(terr.op_unwrap[_ti]))
                 for _si, _dur, _amp in terr_says:
@@ -6158,6 +6183,10 @@ while True:
                 mode_menu.territory_frame += 1
                 if mode_menu.territory_frame % 4 == 0:
                     tclient.send_global(terr.R, terr.C, terr.camps, terr.mean_op())
+                # キープアライブ: SCエンジンを途中で再起動してもフェードインが
+                # 自己復旧するよう、シーンONを5秒ごとに再送(冪等)
+                if mode_menu.territory_frame % 100 == 0:
+                    tclient.scene(True)
             except Exception as e:
                 print(f"[陣取りモード] OSC送信エラー: {e}")
                 mode_menu.territory_client = None
@@ -6183,13 +6212,17 @@ while True:
             _r0, _g0, _b0 = colorsys.hsv_to_rgb(_hue01, 1.0, 1.0)
             if ag.terr_disp_col is None:
                 ag.terr_disp_col = vector(_r0, _g0, _b0)
-            _k = min(1.0, dt / 0.3)
+            # 確信を失った筒は直前の色を保持(確信ゼロ付近の色相はノイズなので
+            # 追従させない=溶解・離脱時のランダム色化を防ぐ)
+            _conv_k = math.hypot(terr.vx[k_ag], terr.vy[k_ag])
+            _k = min(1.0, dt / 0.3) * max(0.12, min(1.0, _conv_k / 0.35))
             _c = ag.terr_disp_col + (vector(_r0, _g0, _b0) - ag.terr_disp_col) * _k
             _m = max(_c.x, _c.y, _c.z)
             if _m > 1e-6:
                 _c = _c / _m
             ag.terr_disp_col = _c
-            terr_color = _c
+            # 硬直が進むほど後方が翳む(前線は明度1を保つ)
+            terr_color = _c * terr.brightness[k_ag]
             ag.body.color = terr_color
             for _ld3, _ld2, _ in ag.leds:
                 _ld3.color = _ld2.color = terr_color

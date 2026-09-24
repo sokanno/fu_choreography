@@ -51,8 +51,9 @@ class TerritoryClient:
             b.add_arg(a)
         return b.build()
 
-    def send_state(self, op, conv, fat, ht, tilt, om):
-        """High-rate state (20 Hz), one OSC bundle. All args: 29 floats."""
+    def send_state(self, op, conv, fat, ht, tilt, om, face=None):
+        """High-rate state (20 Hz), one OSC bundle. All args: N floats.
+        face: 0..1 facing-the-audience factor (voice directivity)."""
         bundle = OscBundleBuilder(IMMEDIATELY)
         bundle.add_content(self._msg("/terr/op", [float(v) for v in op]))
         bundle.add_content(self._msg("/terr/conv", [float(v) for v in conv]))
@@ -60,6 +61,8 @@ class TerritoryClient:
         bundle.add_content(self._msg("/terr/ht", [float(v) for v in ht]))
         bundle.add_content(self._msg("/terr/tilt", [float(v) for v in tilt]))
         bundle.add_content(self._msg("/terr/om", [float(v) for v in om]))
+        if face is not None:
+            bundle.add_content(self._msg("/terr/face", [float(v) for v in face]))
         self.client.send(bundle.build())
 
     def send_global(self, r, c, camps, mean_op, master_gain_db=0.0):
@@ -82,6 +85,14 @@ class TerritoryClient:
 
     def shift(self, auto):
         self.client.send_message("/terr/shift", [1 if auto else 0])
+
+    def melt(self):
+        """Front-line melt gesture (soft hiss wash, no boom)."""
+        self.client.send_message("/terr/melt", [1])
+
+    def split(self, phase):
+        """Schism gesture: phase 0 = fissure begins (creak), 1 = secession (crack)."""
+        self.client.send_message("/terr/split", [int(phase)])
 
     def scene(self, on):
         self.client.send_message("/terr/scene", [1 if on else 0])
