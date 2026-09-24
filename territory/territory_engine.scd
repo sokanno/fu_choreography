@@ -73,6 +73,14 @@ var robots = robotsFile["robots"].collect { |r|
 s.options.numOutputBusChannels = if(devStereo, 2, max(4, hwChans.maxItem + 1));
 s.options.numInputBusChannels = 0;
 
+// 出力デバイス指定(config.json "output_device")。null=システム既定。
+// Max経由構成では "BlackHole 16ch" にして、Maxがアグリゲートデバイスで受ける
+~outDevice = audioCfg["output_device"];
+if(~outDevice.notNil and: { ~outDevice.asString != "" }) {
+	s.options.outDevice = ~outDevice.asString;
+	("output device: " ++ ~outDevice).postln;
+};
+
 s.waitForBoot {
 	// ---------------- buses ----------------
 	~opBus   = Bus.control(s, ~nBots);  // unwrapped opinion angle (rad)
