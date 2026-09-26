@@ -55,8 +55,8 @@ FATIGUE_DIM = 0.6         # 疲れた筒の減光 (w=1 で 1-この値)
 # ② 落ち着かなさ r: 陣営の中で秩序が続くと上がり、カオスの中で下がる。
 #    r が高いと意見が揺らぎ(ノイズ↑・同調↓・過激化↓)、首が回り出す → 陣営が溶ける。
 #    溶けて秩序が消えると r が抜け、また結晶化する (興奮性の周期)。
-REST_UP = 0.12            # 秩序の中で r が上がる速さ [1/s] (調整: 結晶化は全体の約5割、1回30秒前後、ときどき1分超)
-REST_DOWN = 0.01          # カオスの中で r が下がる速さ [1/s] (遅いほどカオスが長い。3分のシーンで8割以上は2極化が起きる)
+REST_UP = 0.25            # 秩序の中で r が上がる速さ [1/s] (相談・メンチ込みで調整: 結晶化は全体の約7割、3分のシーンで8割超は新しい2極化)
+REST_DOWN = 0.02          # カオスの中で r が下がる速さ [1/s] (遅いほどカオスが長い)
 ORDER_TH = 0.3            # 局所秩序 o がこれを超えると「秩序の中」
 REST_NOISE = 7.0          # r=1 で意見ノイズ ×(1+この値)
 REST_SPIN = 0.6           # r=1 で首の回転(スキャン) ×(1+この値) (大きいと全員が上限に寄って速さの差が消える)
@@ -66,6 +66,13 @@ SPLIT_SHARE = 0.5         # …合わせて全体のこの割合以上
 CONSENSUS_SHARE = 0.7     # 最大陣営がこの割合以上 = 合意(斉一)
 CRYST_ENTER = 3.0         # 2陣営がこの秒数続いたら結晶化とみなす
 CRYST_EXIT = 8.0          # 2陣営でない状態がこの秒数続いたら溶解とみなす
+CONSULT = 0.2             # 相談: 確信の弱い筒が意見の近い隣人の方を向くトルク (向き合う→耳を傾け合う→結晶化が進む)
+CONSULT_REST = 0.5        # 落ち着かなさが相談を妨げる度合い (1 だとカオス中は相談しない)
+MENCHI = 0.3              # メンチ: 降りている筒が一番意見の遠い隣(相手陣営)に正面を向けて首を止めるトルク
+MENCHI_HT = (0.4, 0.8)    # この高さ(ht)の範囲で効き始め→全力 (降りるほど相手を真正面に)
+CHATTER_RATE = 0.4        # がやがや: 降りていない筒の小声のおしゃべり [回/s/台] (ht 0 で最大、降りるほど減る)
+CHATTER_AMP = (0.12, 0.3) # その音量の範囲 (通常の発言は 0.3〜1.0)
+DWELL = (1.0, 3.0)        # 底に着いた筒がそこに留まる秒数の範囲 (着くたびにランダム)
 LAND_HT = 0.85            # ht がこれを上に越えたら「底に着いた」(着地音)
 LAND_COOLDOWN = 8.0       # 同じ筒の着地音の最短間隔 [s]
 
@@ -197,6 +204,9 @@ class Territory:
         self.lands = []                  # この step で底に着いた筒
         self._last_land = [-99.0] * n
         self._last_conv = [-99.0] * n
+        self._dwell_until = [-99.0] * n
+        self.opp = [-1] * n              # メンチを切っている相手
+        self.next_chat = [self.rng.random() * 4.0 for _ in range(n)]   # がやがやの次の発話時刻
         self.t = 0.0
         self.shift_count = 0
 
@@ -426,7 +436,8 @@ class Territory:
         nvx, nvy = self.vx[:], self.vy[:]
         for i in range(n):
             pxl = pyl = wsum = 0.0
-            t_ali = t_stare = 0.0
+            t_ali = t_stare = t_cons = 0.0
+            opp, opp_d = -1, 0.8               # メンチの相手: 意見が一番遠い隣人
             # melting tubes hear across the front, stop radicalizing and
             # bleed conviction — the boundary liquefies locally
             mi = self.melt[i]
@@ -444,9 +455,10 @@ class Territory:
                 # ① 影響力は相手の確信×元気さに比例 (強い側が弱った相手を引き込む)
                 mj = math.hypot(self.vx[j], self.vy[j])
                 wt = L * (0.15 + 0.85 * P) * (0.25 + 0.75 * mj * (1 - self.w[j]))
-                # 対立への曝露: 見つめている相手との意見の遠さ
-                ex_sum += L * min(1.0, max(0.0, (d - 0.8) / 0.5))
-                att_sum += L
+                # 対立への曝露: 隣にいる相手陣営との意見の遠さ (向きに依らない。
+                # 見つめる=メンチで疲れが加速すると戦いが一瞬で終わってしまうため)
+                ex_sum += min(1.0, max(0.0, (d - 0.8) / 0.5))
+                att_sum += 1.0
                 if d < 0.4:
                     agree += 1.0                    # 意見の近い隣人
                 eff_eps = eps_i
@@ -459,6 +471,10 @@ class Territory:
                 sim = math.exp(-d * d * 2)
                 t_ali += self.ali * sim * math.sin(angd(self.th[j], self.th[i]))
                 t_stare += self.stare * (d / 2) * math.sin(angd(bij, self.th[i]))
+                # 相談: 意見の近い相手の方を向く (相手もこちらを向けば見つめ合いになる)
+                t_cons += CONSULT * sim * math.sin(angd(bij, self.th[i]))
+                if d > opp_d:
+                    opp, opp_d = j, d
             mu_i = self.mu * (1 - 0.6 * ri)          # ② 落ち着かない筒は同調しにくい
             if wsum > 0:
                 pxl = mu_i * pxl / wsum
@@ -522,8 +538,22 @@ class Territory:
             if self.rng.random() < dt * (0.01 + 0.05 * ri):
                 self.spin[i] = -self.spin[i]
             t_scan = 0.15 * (self.spin[i] * self.scan * spd * (1 + REST_SPIN * ri) - self.om[i])
-            self.om[i] += f * ((1 - engage) * t_scan + engage * (t_ali + t_stare)
-                               + self.rng.uniform(-1, 1) * 0.004)
+            # 確信が弱い(=まだ結晶化していない)ほど相談、強いほど整列/睨み (落ち着かない筒は相談しない)
+            cw = max(0.0, 1.0 - mag / 0.55) * (1 - CONSULT_REST * ri) * (1 - engage)
+            torque = ((1 - engage) * (1 - cw) * t_scan + cw * t_cons
+                      + engage * (t_ali + t_stare))
+            # メンチ: 降りている(戦っている)筒は相手陣営の一人に真正面を向け、そこで首を止める
+            mw = min(1.0, max(0.0, (self.ht[i] - MENCHI_HT[0]) / (MENCHI_HT[1] - MENCHI_HT[0])))
+            # 一度睨んだ相手は、意見が離れている限り睨み続ける (相手を探して首が揺れないように)
+            po = self.opp[i]
+            if po >= 0 and po in self.bear[i] and \
+                    math.hypot(self.vx[po] - self.vx[i], self.vy[po] - self.vy[i]) > 0.7:
+                opp = po
+            self.opp[i] = opp if mw > 0.0 else -1
+            if opp >= 0 and mw > 0.0:
+                t_men = MENCHI * math.sin(angd(self.bear[i][opp], self.th[i])) - 0.5 * self.om[i]
+                torque = (1 - mw) * torque + mw * t_men
+            self.om[i] += f * (torque + self.rng.uniform(-1, 1) * 0.004 * (1 - 0.8 * mw))
             self.om[i] *= 0.93 ** f
             self.om[i] = 0.15 * math.tanh(self.om[i] / 0.15)   # 上限は柔らかく (張り付いて全員同じ速さにならない)
         self.vx, self.vy = nvx, nvy
@@ -604,11 +634,16 @@ class Territory:
                 fresh = 1 - 0.6 * self.w[i]          # 疲れた前線は降りきらない
                 ht_t = (1 - fr) * ht_t * REAR_HT_SCALE + fr * max(ht_t, FRONT_HT * fresh)
                 tl_t = (1 - fr) * tl_t + fr * max(tl_t, FRONT_TILT * fresh)
+            if self.t < self._dwell_until[i]:
+                ht_t = max(ht_t, 1.0)          # 底に着いたらしばらく留まる
             _h0 = self.ht[i]
             self.ht[i] += (ht_t - self.ht[i]) * (1 - math.exp(-dt / 2.0))
-            if _h0 <= LAND_HT < self.ht[i] and self.t - self._last_land[i] > LAND_COOLDOWN:
-                self.lands.append(i)
-                self._last_land[i] = self.t
+            if _h0 <= LAND_HT < self.ht[i]:
+                # 底に着くたびに 1〜3 秒留まる (着地イベントのクールダウンとは無関係)
+                self._dwell_until[i] = self.t + DWELL[0] + self.rng.random() * (DWELL[1] - DWELL[0])
+                if self.t - self._last_land[i] > LAND_COOLDOWN:
+                    self.lands.append(i)
+                    self._last_land[i] = self.t
             self.tilt[i] += (tl_t - self.tilt[i]) * (1 - math.exp(-dt / 1.5))
 
         # emergent camps with membership (opinion-space clustering)
@@ -743,6 +778,18 @@ class Territory:
                 if dv > 0.8 and self.rng.random() < 0.5:
                     self.next_say[j] = min(self.next_say[j],
                                            now + 0.3 + self.rng.random() * 0.8)
+        # がやがや: 降りていない筒は小声でおしゃべりする (迷っている筒も。言い返しの連鎖は起こさない)
+        for i in range(self.n):
+            if now < self.next_chat[i]:
+                continue
+            up = 1.0 - self.ht[i]
+            lam = CHATTER_RATE * up * up
+            self.next_chat[i] = now + min(30.0, self.rng.expovariate(max(lam, 1e-3)))
+            if up < 0.3:
+                continue
+            dur = 0.3 + 0.9 * self.rng.random()
+            amp = CHATTER_AMP[0] + (CHATTER_AMP[1] - CHATTER_AMP[0]) * self.rng.random() * up
+            out.append((i, dur, amp))
         return out
 
     # --- state vectors for OSC ---
