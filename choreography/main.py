@@ -411,7 +411,7 @@ firefly_flash_decay = 0.2        # 発光減衰時間
 
 # 同期パラメータ（Kuramotoモデル）
 firefly_coupling_strength = 0.35  # 結合強度 (2026-09-27「もう少しシンクしなくても」で 0.5→0.35)
-firefly_coupling_radius = 3.0     # 影響を受ける半径[m]
+firefly_coupling_radius = 2.5     # 影響を受ける半径[m] (2026-09-27: 3.0→2.5、より局所的なクラスタ化)
 firefly_phase_shift = 0.25        # 光を見た時の位相シフト量
 firefly_fov_angle = 120.0          # 視野角[度]（前方90°に変更）
 
