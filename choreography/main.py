@@ -53,7 +53,7 @@ node_file = {"nmw": "node_nmw.csv", "fu": "node.csv"}[layout]
 VENUES = {
     # room = 部屋の床/天井サイズ (x, y) [m] (3D表示)。audience_area = 観客(シミュレーション/センサー)が動く範囲 (None なら従来どおりロボット配置の広さ)
     "fu":  dict(ceiling=3.0, top=2.8, cable_length_m=None, room=(6.4, 7.6), audience_area=None),   # コモネ
-    "nmw": dict(ceiling=4.5, top=4.3, cable_length_m=None, room=(7.0, 6.0), audience_area=(7.0, 6.0)),   # New Media Week (吊元 4.5m, カーテンで奥行き(ライン方向x)7m × 横幅(観客から見た左右y)6m)
+    "nmw": dict(ceiling=4.5, top=4.3, cable_length_m=3.0, room=(7.0, 6.0), audience_area=(7.0, 6.0)),   # New Media Week (吊元 4.5m, カーテンで奥行き(ライン方向x)7m × 横幅(観客から見た左右y)6m)。cable_length_m=3.0 → minZ=1.5: ファーム可動域2.8m(top 4.3基準)の下端。シミュも実機が届かない高さを命令しない
 }
 venue = VENUES[layout]
 design_top = 2.8   # 振付の設計基準 (コモネの最高高さ)。変更しないこと
@@ -68,9 +68,11 @@ def vdz(d):
     """z_anchor より上で使う振幅・スパン [m] のスケール。"""
     return d * z_scale
 
-# ロボットへ送る高さ(mm)のオフセット。ファームウェアが天井高2.8m固定の絶対高さで解釈している場合は
-# venue["top"] - design_top (nmw: 1.5) を入れる。ファームが会場の天井高を知っているなら 0.0。
-robot_z_offset_m = 0.0
+# ロボットへ送る高さ(mm)のオフセット。ファームウェアは2.8m超の値で動きを制限する
+# (=天井高2.8m固定の絶対高さ解釈、2026-09-27確認)ため、実寸高さから
+# venue["top"] - design_top (nmw: 1.5) を引いて 0〜2.8 の範囲で送る。
+# 実高 h に置くには v = h - offset (top 4.3→2.8, 下端 1.5→0)。動きは1:1のまま。
+robot_z_offset_m = venue["top"] - design_top
 
 # ウィンチの最大上下速度 [m/s] (2026-09-09 実測値 200 mm/s)。周期運動の振幅×角速度がこれを超えないように使う
 winch_max_speed_mps = 0.2
@@ -1939,7 +1941,9 @@ def process_manual_commands():
     
     # 位置・姿勢のコマンド
     if z_cmd is not None:
-        command["z"] = max(minZ, min(maxZ, float(z_cmd)))
+        # UI.maxpat のスライダーはコモネ/ファーム基準 (0〜2.8)。実寸へはオフセットを足す
+        # (fu: +0 で従来どおり、nmw: +1.5)。送信時に send_robot_data が同じ分を引き戻す
+        command["z"] = max(minZ, min(maxZ, float(z_cmd) + robot_z_offset_m))
     if yaw_cmd is not None:
         command["yaw"] = (float(yaw_cmd) % 360.0 + 360.0) % 360.0
     if pitch_cmd is not None:
