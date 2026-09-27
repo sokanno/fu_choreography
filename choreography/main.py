@@ -433,9 +433,9 @@ firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きい
 
 # 高さ動作パラメータ
 # 待機高さ: NMW では同期するほど下がってくる (色が青→緑になるほど低く、2026-09-09 ユーザー要望)。コモネは従来の固定 2.3
-firefly_z_base_unsynced = vz(2.3) if layout == "fu" else 3.4   # 位相がずれている(青い)時の待機高さ [m]
-firefly_z_base_synced   = vz(2.3) if layout == "fu" else 2.4   # 揃っている(緑の)時の待機高さ [m] (最低)
-firefly_z_base_smooth   = 0.5     # 待機高さの追従時定数 [s] (位相偏差のブレを平滑化)
+firefly_z_base_unsynced = vz(2.3) if layout == "fu" else 3.9   # 位相がずれている(青い)時の待機高さ [m] (2026-09-27 現場所感「高低差をもっと広く」で 3.4→3.9)
+firefly_z_base_synced   = vz(2.3) if layout == "fu" else 2.0   # 揃っている(緑の)時の待機高さ [m] (最低) (同上 2.4→2.0、スパン1.0→1.9m)
+firefly_z_base_smooth   = 1.5     # 待機高さの追従時定数 [s] (スパン拡大に合わせ 0.5→1.5: 実効スルーを従来並みに)
 firefly_z_base = firefly_z_base_unsynced   # トランジション先 (モード開始時の高さ)
 # 高さの振幅: 上下は発光位相(周期 4 s ±20%)に同期するので、振幅/2 × 2π/3.2 s ≤ ウィンチ 0.2 m/s → 振幅 ≤ 0.20 m。
 # vdz(0.15)=0.43 m は 0.34 m/s で超過していたため NMW は 0.20 に (2026-09-09)。コモネは従来の 0.15
