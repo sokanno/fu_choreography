@@ -404,13 +404,13 @@ def twofus_descend_step(ag, floor_z, t, dt):
 # ========================================================
 # 基本発光パラメータ
 firefly_base_period = 4.0        # 基本発光周期[秒]
-firefly_period_variance = 0.2    # 周期の個体差（±20%）
+firefly_period_variance = 0.25   # 周期の個体差（±25%。2026-09-27「もう少しシンクしなくても」で 0.2→0.25）
 firefly_flash_rise = 0.05        # 発光立ち上がり時間
 firefly_flash_hold = 0.1         # 発光維持時間
 firefly_flash_decay = 0.2        # 発光減衰時間
 
 # 同期パラメータ（Kuramotoモデル）
-firefly_coupling_strength = 0.5  # 結合強度
+firefly_coupling_strength = 0.35  # 結合強度 (2026-09-27「もう少しシンクしなくても」で 0.5→0.35)
 firefly_coupling_radius = 3.0     # 影響を受ける半径[m]
 firefly_phase_shift = 0.25        # 光を見た時の位相シフト量
 firefly_fov_angle = 120.0          # 視野角[度]（前方90°に変更）
