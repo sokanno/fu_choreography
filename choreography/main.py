@@ -390,6 +390,14 @@ twofus_hesitate_prob    = 0.1    # 戸惑いながら帰る確率 (2026-09-24: 0
 twofus_hesitate_dip_m   = (0.15, 0.35)   # 1 回の戻り下がり量 [m] の範囲
 twofus_hesitate_pause_s = (0.8, 2.0)     # 下がった後に止まる時間 [s] の範囲
 
+# 向き合う: 降りきってから GridEye(自律モード)を有効にする (2026-09-28)。
+# 以前はシーンに入った瞬間に at=1 を立てていたので、まだ天井にいるうちから人を追い始めていた。
+facing_z_range           = (1.9, 2.05) # 降下先の高さ [m] の範囲 (2026-09-28: 10cm上げ 1.8-1.95→1.9-2.05)。
+                                       # 人基準の実寸。vz() は通さない (2.0 を超えると会場スケールで引き伸ばされるため。fu では vz は恒等)
+facing_arrive_margin_m   = 0.05         # 目標にこれだけ近づいたら到着とみなす [m]
+facing_descend_pitch_deg = 0.0          # 降下中のピッチ [度] (到着後は 90 = 自律制御の合図)
+facing_descend_dim       = 0.0          # 降下中の明るさの倍率 (到着後=1.0)。0 = 消灯したまま降りてくる
+
 def twofus_descend_step(ag, floor_z, t, dt):
     """降下1ステップ。名目の高さ ag.twofus_desc_nom を twofus_descend_speed で下げ、その上に
     正弦+Perlinノイズの上下ゆらぎ (twofus_descend_bob_amp) を重ねる。ゆらぎは降下の始点・終点で
@@ -599,6 +607,9 @@ def on_mode_select(m):
         if hasattr(ag, 'autonomous_mode'):
             ag.autonomous_mode = False
             ag.actual_pitch = ag.pitch
+        if hasattr(ag, 'facing_base_z'):
+            del ag.facing_base_z     # 向き合う: 再入場のたびに降下先を引き直す
+            ag.facing_arrived = False
         if hasattr(ag, 'update_autonomous_indicator'):
             ag.update_autonomous_indicator()  # これで赤いリングが消える
     
@@ -4710,13 +4721,33 @@ while True:
 
         # 表示更新
         for ag in agents:
-            ag.autonomous_mode = True
-            ag.pitch = 90.0  # 自律制御の信号
-            # ag.z = random.uniform(1.2, 1.6)  # 高さをランダムに設定
-            ag.z = random.uniform(vz(1.8), vz(1.95))  # 高さをランダムに設定 (人基準: z_anchor 以下なので会場で変わらない)
-            ag.current_color.x = random.uniform(0.8, 0.83)
-            ag.current_color.y = random.uniform(0.53, 0.56)
-            ag.current_color.z = random.uniform(0.1, 0.13)  # 黄色系の色に設定
+            # 降下先(到着判定の基準)は筒ごとに1回だけ抽選
+            if not hasattr(ag, 'facing_base_z'):
+                ag.facing_base_z = random.uniform(facing_z_range[0], facing_z_range[1])
+                ag.facing_arrived = False
+            # 降下中は基準へ一直線。着いたら毎フレーム範囲内を引き直して、
+            # ウィンチの速度制限が効いた分だけゆらゆら漂う (従来の上下動)
+            if ag.facing_arrived:
+                _ftgt = random.uniform(facing_z_range[0], facing_z_range[1])
+            else:
+                _ftgt = ag.facing_base_z
+            _fdz = winch_max_speed_mps * dt
+            ag.z += max(-_fdz, min(_fdz, _ftgt - ag.z))
+            ag.z = max(minZ, min(maxZ, ag.z))
+            # 一度着いたらラッチする (揺らぎで到着判定が外れて GridEye が点滅しないように)
+            if not ag.facing_arrived and abs(ag.z - ag.facing_base_z) <= facing_arrive_margin_m:
+                ag.facing_arrived = True
+            # 降りきってから GridEye(自律モード)を有効化。pitch 90 も到着後だけ
+            ag.autonomous_mode = ag.facing_arrived
+            ag.pitch = 90.0 if ag.facing_arrived else facing_descend_pitch_deg
+            ag.update_autonomous_indicator()
+            # 黄色系の色。降下中は落として(既定は消灯)、到着して自律に入った瞬間に点く
+            _fdim = 1.0 if ag.facing_arrived else facing_descend_dim
+            ag.current_color.x = random.uniform(0.8, 0.83) * _fdim
+            ag.current_color.y = random.uniform(0.53, 0.56) * _fdim
+            ag.current_color.z = random.uniform(0.1, 0.13) * _fdim
+            if not ag.facing_arrived:
+                ag.downlight_brightness = 0.0   # ダウンライトも消しておく
             ag.display()
             update_downlight_display(ag)  # ← ダウンライト表示を更新
             send_queue.put(ag)
