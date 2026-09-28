@@ -2974,7 +2974,8 @@ while True:
         # max_height = 2.2  # 物理的制約により固定
         # min_height = 1.0  # 人がいない場合の最低高さ
         max_height = vz(2.75)  # 物理的制約により固定 (コモネ基準)
-        min_height = vz(1.85)  # 人がいない場合の最低高さ
+        min_height = vz(1.85) if layout == "fu" else 2.35  # 最低高さ (NMW: 2026-09-28 現場で 1.85→2.35、50cm上げ)
+        # 振幅は max_height - center_z まで抽選されるので、上下動はちょうど min_height〜max_height を使う
         center_z = (max_height + min_height) / 2  # 中間点を動的に計算
         # 人がいるかどうかを確認
         people_detected = len(audiences) > 0
