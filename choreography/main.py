@@ -25,6 +25,10 @@ import queue
 
 # ── 陣取りモード: territory/ のシミュレーション+音響クライアント ──
 terr_color_smooth_s = 1.5   # 陣取りの色の追従の遅さ [s] (0.3 だとカオス中の色のちらつきが速すぎた。2026-09-24)
+# 暗い筒(=天井にいる/疲れている)ほど彩度を抜いて白茶けたパステルにする (2026-09-28)。
+# 彩度を抜いても最大成分は 1 のままなので明度(HSVのV)は変わらない。明度は下の dim で別に絞る。
+terr_desat_dark = 0.55   # 彩度を抜く量 (0=抜かない, 1=真っ白)。明度1の前線は 0 のまま影響を受けない
+terr_dark_dim   = 0.80   # 暗い側の明度をさらに何倍するか (1.0=変更なし)。もっと抑えるなら下げる
 import os, sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "territory"))
 try:
@@ -6286,7 +6290,11 @@ while True:
                 _c = _c / _m
             ag.terr_disp_col = _c
             # 硬直が進むほど後方が翳む(前線は明度1を保つ)
-            terr_color = _c * terr.brightness[k_ag]
+            _b = terr.brightness[k_ag]
+            # 暗いほど白を混ぜて彩度を落とす(最大成分は1のままなので明度は不変)
+            _cs = _c + (vector(1.0, 1.0, 1.0) - _c) * (terr_desat_dark * (1.0 - _b))
+            # 明度は暗い側だけさらに絞る(前線 _b=1 では等倍のまま)
+            terr_color = _cs * (_b * (terr_dark_dim + (1.0 - terr_dark_dim) * _b))
             ag.body.color = terr_color
             for _ld3, _ld2, _ in ag.leds:
                 _ld3.color = _ld2.color = terr_color
