@@ -2,7 +2,9 @@
 """New Media Week (25 robots) layout -> node_nmw.csv + Max pan table.
 
 Drawing frame (hangingPlan.pdf / PRODUKCJA p.47): 5 lines of 5.1 m, 1 m apart,
-5 robots per line at 1 m pitch, even lines shifted 0.5 m. x = along the lines
+5 robots per line at 1 m pitch, odd lines shifted 0.5 m
+(2026-09-28: 現物に合わせて位相を反転。観客から見て左端/真ん中/右端の列が手前、
+その左右隣の列が 50 cm 奥)。 x = along the lines
 (+x = right of the drawing), y = across (+y = top of the drawing). Centered.
 
 FRONT = which side of the drawing the audience/operator looks from.
@@ -33,7 +35,7 @@ def drawing_positions():
     xc = (0.3 + 4.8) / 2
     for li in range(5):                      # line 1 (top) .. line 5 (bottom)
         y = 2.0 - li
-        x0 = 0.3 if li % 2 == 0 else 0.8
+        x0 = 0.8 if li % 2 == 0 else 0.3
         for k in range(5):
             pts.append((round(x0 + k - xc, 2), round(y, 2), li + 1))
     return pts
