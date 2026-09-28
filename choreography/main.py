@@ -107,6 +107,10 @@ separationFactor = 0.14
 cohesionFactor   = 1.76
 rotationSpeed    = 0.0        # 3Dカメラの周回速度。0で視点固定 (2026-09-09 停止)。回すなら 0.001
 cameraAngle      = 0.0        # 固定視点の方位 (rad)。0 = 配置図の右側(PC側)から見る = gen_node_nmw.py の FRONT="right"。left→math.pi, bottom→-math.pi/2, top→math.pi/2
+# 会場の方位 (2026-09-28 実測)。ロボットのコンパスはキャリブレーション済みで、0 を送ると北を向く。
+# シムの yaw は 0=手前(+x)・反時計回り、コンパスは 0=北・時計回りなので、送信時に反転して合わせる
+# (send_robot_data)。会場が変わったらこの1つだけ測り直せばよい。
+venue_back_bearing_deg = 170.0   # 観客から見て「奥」の方位 [度]。NMW: 170 = 南
 radius           = 5.5
 cameraHeight     = 1.0
 
@@ -1772,7 +1776,9 @@ def send_robot_data(agent):
     # ---- MQTT 出力 ----
     # 位置・向き
     z_m = max(minZ, min(maxZ, agent.z)) - robot_z_offset_m   # robot_z_offset_m: ファーム側の天井高前提の差分
-    yaw_deg = (agent.yaw % 360.0 + 360.0) % 360.0  # 0–360
+    # シムの yaw (0=手前, 反時計回り) → ファームのコンパス方位 (0=北, 時計回り)。
+    # 手前の方位 = 奥 + 180。回転の向きが逆なので符号を反転させる。
+    yaw_deg = (venue_back_bearing_deg + 180.0 - agent.yaw) % 360.0  # 0–360
     # Pitch: 向き合うモード（autonomous_mode=True）なら90度を送信
     if agent.autonomous_mode:
         pitch_deg = 90.0
@@ -3332,7 +3338,7 @@ while True:
                 lead = agents[current_groupA_idx]
                 dx, dy = lead.x - ag.x, lead.y - ag.y
                 dz = lead.z - ag.z
-                base_yaw = math.degrees(math.atan2(dy, dx)) + 240.0  # CCW補正
+                base_yaw = math.degrees(math.atan2(dy, dx))   # リーダーを向く方位
                 base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
                 tgt_yaw, tgt_pitch = base_yaw, base_pitch
 
