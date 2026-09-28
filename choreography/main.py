@@ -367,9 +367,9 @@ detect_radius_butterfly = 0.0
 twofus_descend_speed    = 0.8 if layout == "fu" else winch_max_speed_mps   # 降下速度 [m/s] (NMW: まっすぐ 0.2 m/s、2.3 m を約 12 s)
 twofus_descend_bob_amp  = 0.0                                # 降下中の上下ゆらぎ振幅 [m] (0 で一直線。ユーザー判断 2026-09-09: 降下は揺らさない)
 twofus_descend_bob_hz   = 0.12                               # ゆらぎの基本周波数 [Hz]
-twofus_target_z         = vz(2.0) # アクティブ筒の目標高さ [m]
-twofus_bob_min          = vz(1.8) # 上下動の下限 [m]
-twofus_bob_max          = 2.2     # 上下動の上限 [m] (人基準なので会場で変えない。vz(2.2)=2.58 にすると到着判定 2.05 に届かず降下フェーズで詰まる)
+twofus_target_z         = vz(2.0) if layout == "fu" else 2.5 # アクティブ筒の目標高さ [m] (NMW: 2026-09-28 現場で底辺を50cm上げ 2.0→2.5)
+twofus_bob_min          = vz(1.8) if layout == "fu" else 2.3 # 上下動の下限 [m] (NMW: 同上 1.8→2.3。実効下限はクランプで -0.1 の 2.2 m)
+twofus_bob_max          = 2.2 if layout == "fu" else 2.7     # 上下動の上限 [m] (帯の幅 0.4 m は保つ。vz() で伸ばすと到着判定に届かず降下フェーズで詰まるので実寸で指定)
 twofus_mob_z            = maxZ   # モブの高さ（天井）
 twofus_interaction_dur_min = 4.0   # 交信の最短時間 [s]
 twofus_interaction_dur_max = 12.0  # 交信の最長時間 [s]
@@ -442,7 +442,7 @@ firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きい
 # 高さ動作パラメータ
 # 待機高さ: NMW では同期するほど下がってくる (色が青→緑になるほど低く、2026-09-09 ユーザー要望)。コモネは従来の固定 2.3
 firefly_z_base_unsynced = vz(2.3) if layout == "fu" else 3.9   # 位相がずれている(青い)時の待機高さ [m] (2026-09-27 現場所感「高低差をもっと広く」で 3.4→3.9)
-firefly_z_base_synced   = vz(2.3) if layout == "fu" else 2.0   # 揃っている(緑の)時の待機高さ [m] (最低) (同上 2.4→2.0、スパン1.0→1.9m)
+firefly_z_base_synced   = vz(2.3) if layout == "fu" else 2.5   # 揃っている(緑の)時の待機高さ [m] (最低) (2026-09-28 現場で底辺を50cm上げ 2.0→2.5、スパン1.9→1.4m)
 firefly_z_base_smooth   = 1.5     # 待機高さの追従時定数 [s] (スパン拡大に合わせ 0.5→1.5: 実効スルーを従来並みに)
 firefly_z_base = firefly_z_base_unsynced   # トランジション先 (モード開始時の高さ)
 # 高さの振幅: 上下は発光位相(周期 4 s ±20%)に同期するので、振幅/2 × 2π/3.2 s ≤ ウィンチ 0.2 m/s → 振幅 ≤ 0.20 m。
