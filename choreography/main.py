@@ -263,6 +263,8 @@ fish_base_no_person_nmw = 2.5   # NMW の魚群の基準高さ [m] (人検出な
 # 天上天下: 位相速度 [rad/s] (すれ違い間隔 = π/速度)。NMW は振幅が大きいので遅め (2026-09-09)
 # 回る天井: 夕焼けで赤くなる側。+1 = +x 端 (コモネ従来)、-1 = -x 端 (NMW では観客から見て奥、2026-09-09)
 sunset_x_sign = 1.0 if layout == "fu" else -1.0
+# 回る天井: 空の色彩サイクル(夜→朝→昼→夕→夜)の1日の長さ [s] (2026-09-28: 120→150)
+ceiling_day_length_s = 150.0
 # 回る天井: 面の回転速度の倍率。NMW は高低差が vdz で約2.9倍になり各筒の上下が速く見えるので半分に (2026-09-09)
 plane_rot_speed_scale = 1.0 if layout == "fu" else 0.5
 # 回る天井: True なら面が上限 maxZ を超える分だけ面全体を下げ、上側が平らに並ぶのを避ける (コモネは高さ制限ゆえ従来どおりクリップ)
@@ -2628,7 +2630,7 @@ while True:
             
             # (H) 色更新（空の演出バージョン）
             # ★空の色彩サイクル（1日の空の変化）- 1サイクル=2分
-            cycle_time = sim_time / 120.0  # 120秒で1日
+            cycle_time = sim_time / ceiling_day_length_s  # 1日の長さは ceiling_day_length_s 秒
             
             # 1サイクルを1日として、0.0-1.0の時間として正規化
             day_time = cycle_time % 1.0
