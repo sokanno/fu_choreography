@@ -272,6 +272,14 @@ plane_keep_below_top = (layout != "fu")
 plane_spread_amp = 0.0   # 回る天井の面の高低差の半分 [m] (毎フレーム更新、角速度の制限に使う)
 plane_min_z = minZ if layout == "fu" else 2.0   # 回る天井の一番低い筒の下限 [m] (NMW: 2.0、ユーザー指定 2026-09-09)
 tenge_speed_init  = 0.7 if layout == "fu" else 0.4          # 初期値 (fu 4.5 s / nmw 7.9 s 間隔)
+# 天上天下: 孤立に戸惑って他の筒を見回す動き (2026-09-29)。Group B の一部だけに付ける。
+# 一定時間ごとに「見る相手」を選び直し、その相手へヨーとピッチを向ける。
+# 相手が自分より高ければ見上げ、低ければ見下ろす形になる。すれ違いのたびに誰が戸惑うか引き直す
+tenge_confused_ratio    = 0.5         # Group B のうち戸惑う割合 (0=なし, 1=全員)
+tenge_confused_gaze_s   = (0.5, 1.4)  # 一人を見ている時間 [s] の範囲 (2026-09-29: 1.2-3.0 から短く)
+tenge_confused_leader_p = 0.35        # 見る相手がリーダー(A)になる確率。A は高さが違うので見上げ/見下ろしになる
+tenge_confused_yaw_dps  = 150.0       # 首を横に振る速さ [度/秒] (回る天井は 45-180 で回しているので余裕内)
+tenge_confused_pitch_dps = 70.0       # 見上げ/見下ろしの速さ [度/秒] (横より落ち着かせる)
 tenge_speed_range = (0.5, 0.8) if layout == "fu" else (0.3, 0.5)   # すれ違いごとの再抽選範囲 (fu 3.9–6.3 s / nmw 6.3–10.5 s)
 fish_base_no_person = vz(2.0) if layout == "fu" else fish_base_no_person_nmw   # 人がいない時の基準高さ
 fish_drift_offset = 37.0   # ゆらぎノイズの時間オフセット (モード開始時に「高いところ」から始まるよう選び直す)
@@ -3143,6 +3151,8 @@ while True:
                     ag.tenge_snap_delay = base_delay * random.uniform(0.75, 1.25)  # ±25%揺らぎ
                     ag.tenge_dip_depth = 1.0 * random.uniform(0.75, 1.0)  # 暗さ -25%揺らぎ
                     ag.tenge_snapped = False
+                    # 誰が孤立に戸惑うかを引き直す (半分くらいは動かないまま)
+                    ag.tenge_confused = (random.random() < tenge_confused_ratio)
                 # osc_client_max.send_message('/trig', 0)
                 selected_node_id = agents[current_groupA_idx].node_id
                 osc_client_max.send_message('/trig', int(selected_node_id))
@@ -3358,6 +3368,24 @@ while True:
                 dz = lead.z - ag.z
                 base_yaw = math.degrees(math.atan2(dy, dx))   # リーダーを向く方位
                 base_pitch = math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+                # 孤立に戸惑う筒は、リーダーではなく他の誰かを見る。
+                # 一定時間ごとに相手を選び直すので、左を見て右を見て、
+                # 相手の高さによって見上げたり見下ろしたりする
+                if getattr(ag, 'tenge_confused', False):
+                    if sim_time >= getattr(ag, 'tenge_gaze_until', -1.0):
+                        if random.random() < tenge_confused_leader_p:
+                            ag.tenge_gaze_idx = current_groupA_idx
+                        else:
+                            _gc = [i for i in range(len(agents))
+                                   if i != ag.idx and i != current_groupA_idx]
+                            ag.tenge_gaze_idx = random.choice(_gc) if _gc else current_groupA_idx
+                        ag.tenge_gaze_until = sim_time + random.uniform(*tenge_confused_gaze_s)
+                    _gt = agents[getattr(ag, 'tenge_gaze_idx', current_groupA_idx)]
+                    _gdx, _gdy, _gdz = _gt.x - ag.x, _gt.y - ag.y, _gt.z - ag.z
+                    _gh = math.hypot(_gdx, _gdy)
+                    if _gh > 1e-6:
+                        base_yaw = math.degrees(math.atan2(_gdy, _gdx))
+                        base_pitch = math.degrees(math.atan2(_gdz, _gh))
                 tgt_yaw, tgt_pitch = base_yaw, base_pitch
 
                 ag.autonomous_mode = False
@@ -3387,9 +3415,18 @@ while True:
                     ag.pitch = tgt_pitch
                     ag.tenge_snapped = True
                 elif already_snapped:
-                    # スナップ済み：毎フレーム追従
-                    ag.yaw = tgt_yaw
-                    ag.pitch = tgt_pitch
+                    if getattr(ag, 'tenge_confused', False):
+                        # 視線の切り替えは首を回して追う (相手が変わっても瞬間移動しない)
+                        _ylim = tenge_confused_yaw_dps * dt
+                        _plim = tenge_confused_pitch_dps * dt
+                        _dy = ((tgt_yaw - ag.yaw + 540) % 360) - 180
+                        ag.yaw = (ag.yaw + max(-_ylim, min(_ylim, _dy))) % 360.0
+                        _dp = tgt_pitch - ag.pitch
+                        ag.pitch += max(-_plim, min(_plim, _dp))
+                    else:
+                        # スナップ済み：毎フレーム追従
+                        ag.yaw = tgt_yaw
+                        ag.pitch = tgt_pitch
                 # else: まだ遅延中→向きを保持（何もしない）
             
             # actual_pitchを更新
