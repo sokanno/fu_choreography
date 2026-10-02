@@ -29,38 +29,9 @@ terr_color_smooth_s = 1.5   # 陣取りの色の追従の遅さ [s] (0.3 だと�
 # 彩度を抜いても最大成分は 1 のままなので明度(HSVのV)は変わらない。明度は下の dim で別に絞る。
 terr_desat_dark = 0.0    # 彩度を抜く量 (0=抜かない, 1=真っ白)。★比較のため一時的に無効化。戻すなら 0.55
 terr_dark_dim   = 1.0    # 暗い側の明度をさらに何倍するか (1.0=変更なし)。★一時的に無効化。戻すなら 0.80
-# 陣取り: 一番激しいところで全体を凍らせる演出 (2026-09-30)。
-# 「パソコンがフルパワーを出した瞬間に固まる」印象を狙う。
-# 発火 → 10秒の完全静止 → 1台ずつ動き出す。凍結中は terr.step(0.0) を呼ぶので、
-# モデルの状態もティックもしゃべりも完全に止まり、ドローンだけが持続する
-terr_freeze_enable       = True
-# 1サイクル(シーンに入ってからの経過)につき必ず1回だけ凍る。
-# サイクルの win_from 〜 win_to の区間で、最初に来たピークを捕まえる。
-# 区間の終わりまでピークが来なければ、そこで必ず発火する (取りこぼしゼロ)
-terr_freeze_period_s     = 180.0  # 1サイクルの長さ [s]。テストするなら 60 などに下げる
-terr_freeze_win_from     = 0.40   # サイクルのこの割合を過ぎたら発火可能 (180秒なら 72秒)
-terr_freeze_win_to       = 0.85   # この割合までに必ず発火 (180秒なら 153秒)
-# 「フルパワーで固まる」印象にするため、絶対値ではなく直近の履歴の中でのピークを狙う。
-# 強度 = 音量 + 高さのばらつき + 動きの量。直近 hist_s 秒の中で上位 peak_pct% に入り、
-# かつ上昇中なら発火する。絶対値の閾値と違い「一番激しい瞬間」を必ず捕まえられる
-terr_freeze_w_loud       = 0.50   # 強度に占める音量の重み
-terr_freeze_w_spread     = 0.30   # 高さのばらつき(標準偏差)の重み
-terr_freeze_w_motion     = 0.20   # 動きの量(平均|dht/dt|)の重み
-terr_freeze_hist_s       = 40.0   # ピーク判定に使う直近の履歴の長さ [s]
-terr_freeze_peak_pct     = 92.0   # 履歴の上位何%に入れば「ピーク」とみなすか
-terr_freeze_need_attack  = True   # 強度が上昇中に限る (降下のアタックを捕まえる)
-terr_freeze_gain_db      = 4.5    # 静止中にマスターゲインを何dB持ち上げるか (SC の Lag 0.3s で滑らかに。6は上げすぎ、3は控えめ)
-terr_z_speed_factor      = 0.8    # 高さ指令の速さ = ウィンチ上限 × これ。1.0 未満にすると実機に追従の余裕ができ、止まりが鋭くなる
-terr_freeze_hold_s       = 10.0   # 静止している時間 [s] (2026-09-30: 3→10)
-# 動き出す順: 1台目がソロ → solo_s 後に2台目 → gap_s 後に3台目 → gap_s 後に残りが一気に。
-# 最初の3台は1台ずつ認識できるよう間隔を空ける (2026-09-30)
-terr_freeze_solo_s       = (4.0, 6.0)  # 1台目がひとりで動く時間 [s] の範囲
-terr_freeze_gap_s        = (2.0, 3.0)  # 2台目→3台目、3台目→残り の間隔 [s] (それぞれ独立に抽選)
-terr_freeze_wake_s       = 4.0    # 4台目以降が出そろうまでの時間 [s]
-terr_freeze_wake_curve   = 2.0    # 2 = 動いている台数が二次関数的に増える (t=T*√順位)
-terr_freeze_wake_ease_s  = 0.6    # 目覚めた筒がモデルに追いつくまでの時間 [s]
-terr_freeze_wake_order   = "random"  # "random"=ばらばらに / "axis"=ある方向から順に
-terr_freeze_wake_dir_deg = 90.0   # "axis" のときの向き [度] (0=+x=手前へ, 90=+y=観客の右へ)
+# 陣取り: 高さ指令の速さ = ウィンチ上限 × これ。1.0 だと 1 フレームで差の 15% を詰めるため
+# 実測で 26% の時間が上限 0.2 m/s を超え (ピーク 0.80 m/s)、実機が追いつけず遅れ続けていた
+terr_z_speed_factor = 0.8
 import os, sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "territory"))
 try:
@@ -6278,8 +6249,6 @@ while True:
         if not hasattr(mode_menu, 'territory_initialized') or not mode_menu.territory_initialized:
             print("[陣取りモード] 初期化開始")
             mode_menu.territory_initialized = True
-            mode_menu.terr_fz_cycle_t0 = sim_time   # 凍結は1サイクルに1回。シーンに入った時刻が起点
-            mode_menu.terr_fz_done = False
             mode_menu.territory_model = TerritoryModel([(ag.x, ag.y) for ag in agents])
             mode_menu.territory_frame = 0
             mode_menu.territory_active = True
@@ -6298,133 +6267,7 @@ while True:
         tclient = mode_menu.territory_client
 
         # ── モデルを1ステップ進めて音響へ送信 ──
-        # ── SC 側の音量を近似する ──
-        # ドローンの声は vg (LagUD 0.8s立上/0.025s立下) × gate × クレッシェンド。
-        # ht>0.85 で切れ ht<0.35 で戻る(cutOn)、上昇中は無音(rising)。
-        # 「降下のアタック」= このスコアが上昇しながら閾値を越える瞬間
-        _sd = getattr(mode_menu, 'terr_snd', None)
-        if _sd is None or len(_sd[0]) != len(agents):
-            _sd = mode_menu.terr_snd = ([False] * len(agents), list(terr.ht),
-                                        [1.0] * len(agents), [0.0] * len(agents))
-        _scut, _sprev, _svg, _sris = _sd
-        _up = 1.0 - math.exp(-dt / 0.8)
-        _dn = 1.0 - math.exp(-dt / 0.025)
-        _rup = 1.0 - math.exp(-dt / 0.05)
-        _rdn = 1.0 - math.exp(-dt / 0.6)
-        _loud = 0.0
-        _mot_acc = 0.0
-        for _q in range(len(agents)):
-            _hq = terr.ht[_q]
-            if _hq > 0.85:
-                _scut[_q] = True
-            elif _hq < 0.35:
-                _scut[_q] = False
-            _raw = 1.0 if ((_hq - _sprev[_q]) / max(1e-6, dt) < -0.02 and _hq > 0.35) else 0.0
-            _sris[_q] += (_raw - _sris[_q]) * (_rup if _raw > _sris[_q] else _rdn)
-            _vt = (0.0 if _scut[_q] else 1.0) * (1.0 - _sris[_q])
-            _svg[_q] += (_vt - _svg[_q]) * (_up if _vt > _svg[_q] else _dn)
-            _gq = max(0.08 + 0.92 * terr.C * terr.C,
-                      0.75 * max(0.0, min(1.0, (_hq - 0.5) * 2.0)) ** 2)
-            _loud += _svg[_q] * _gq * (0.45 + 0.8 * _hq) * (1.0 + 2.0 * _hq ** 3)
-            _mot_acc += abs(_hq - _sprev[_q]) / max(1e-6, dt)
-            _sprev[_q] = _hq
-        # 高さのばらつきと動きの量 (前フレームとの差は上のループで使った _sprev より前の値が要るので別に持つ)
-        mode_menu.terr_motion = _mot_acc / len(agents)
-        _hmean = sum(terr.ht) / len(terr.ht)
-        _spread = (sum((h - _hmean) ** 2 for h in terr.ht) / len(terr.ht)) ** 0.5
-        _motion = mode_menu.terr_motion
-        # 強度: それぞれ実測の上位5%あたりで 1.0 になるよう正規化してから重み付け
-        _inten = (terr_freeze_w_loud * min(2.0, _loud / 6.0)
-                  + terr_freeze_w_spread * min(2.0, _spread / 0.25)
-                  + terr_freeze_w_motion * min(2.0, _motion / 0.15))
-        _hist = getattr(mode_menu, 'terr_int_hist', None)
-        if _hist is None:
-            _hist = mode_menu.terr_int_hist = []
-        _hist.append(_inten)
-        _hmax = int(terr_freeze_hist_s / max(1e-6, dt))
-        if len(_hist) > _hmax:
-            del _hist[:len(_hist) - _hmax]
-        _loud_prev = getattr(mode_menu, 'terr_loud_prev', _inten)
-        _loud_rising = _inten > _loud_prev
-        mode_menu.terr_loud_prev = _inten
-        # 直近の履歴の中でのピークか
-        _srt = sorted(_hist)
-        _thr = _srt[min(len(_srt) - 1, int(len(_srt) * terr_freeze_peak_pct / 100.0))]
-        _is_peak = len(_hist) >= _hmax // 4 and _inten >= _thr
-
-        # ── 凍結演出の状態機械: None → hold → wake → None ──
-        _fz = getattr(mode_menu, 'terr_fz_state', None)
-        _fzt = sim_time - getattr(mode_menu, 'terr_fz_t0', 0.0)
-        if _fz is None:
-            if getattr(mode_menu, 'terr_fz_cycle_t0', None) is None:
-                mode_menu.terr_fz_cycle_t0 = sim_time
-                mode_menu.terr_fz_done = False
-            _cyc = sim_time - mode_menu.terr_fz_cycle_t0
-            if _cyc >= terr_freeze_period_s:      # 次のサイクルへ
-                mode_menu.terr_fz_cycle_t0 += terr_freeze_period_s * int(_cyc / terr_freeze_period_s)
-                mode_menu.terr_fz_done = False
-                _cyc = sim_time - mode_menu.terr_fz_cycle_t0
-            _fz_due = ((not mode_menu.terr_fz_done)
-                       and _cyc >= terr_freeze_period_s * terr_freeze_win_from
-                       and ((_is_peak and (_loud_rising or not terr_freeze_need_attack))
-                            or _cyc >= terr_freeze_period_s * terr_freeze_win_to))
-            if terr_freeze_enable and _fz_due:
-                _fz = mode_menu.terr_fz_state = 'hold'
-                mode_menu.terr_fz_t0 = sim_time
-                mode_menu.terr_fz_done = True
-                _fzt = 0.0
-                for _a in agents:
-                    _a.terr_frozen = (_a.yaw, _a.pitch, _a.z)
-                # 音側も凍らせる: SC へ送る筒ごとの状態を控えておき、
-                # 解凍時は目覚めた筒だけ生の値へ寄せる (1台目が動いた瞬間に全部の音が戻らないように)
-                mode_menu.terr_fz_rc = (terr.R, terr.C)
-                mode_menu.terr_fz_snap = (list(terr.op_unwrap), list(terr.conviction()),
-                                          list(terr.fat_out()), list(terr.ht), list(terr.tilt),
-                                          list(terr.omega_rad_s()), list(terr.facing(0.0)))
-                print(f"[陣取りモード] 凍結 ({_cyc:.0f}秒地点, 強度 {_inten:.2f} 音量 {_loud:.1f} ばらつき {_spread:.2f} 動き {_motion:.2f})")
-        elif _fz == 'hold' and _fzt >= terr_freeze_hold_s:
-            _fz = mode_menu.terr_fz_state = 'wake'
-            mode_menu.terr_fz_t0 = sim_time
-            _fzt = 0.0
-            # 1台目はソロで動き、2台目以降は t = solo + wake_s * 順位**(1/curve)。
-            # curve=2 なら t=√順位 なので、動いている台数は時間の二乗で増える
-            _ord = list(range(len(agents)))
-            if terr_freeze_wake_order == "axis":
-                _wdr = math.radians(terr_freeze_wake_dir_deg)
-                _ord.sort(key=lambda i: agents[i].x * math.cos(_wdr) + agents[i].y * math.sin(_wdr))
-            else:
-                random.shuffle(_ord)
-            _t1 = 0.0
-            _t2 = _t1 + random.uniform(*terr_freeze_solo_s)
-            _t3 = _t2 + random.uniform(*terr_freeze_gap_s)
-            _t4 = _t3 + random.uniform(*terr_freeze_gap_s)
-            _nn = max(1, len(_ord) - 4)
-            for _r, _i in enumerate(_ord):
-                if _r == 0:
-                    _at = _t1
-                elif _r == 1:
-                    _at = _t2
-                elif _r == 2:
-                    _at = _t3
-                else:
-                    _at = _t4 + terr_freeze_wake_s * (((_r - 3) / _nn) ** (1.0 / terr_freeze_wake_curve))
-                agents[_i].terr_wake_at = sim_time + _at
-            mode_menu.terr_fz_end = _t4 + terr_freeze_wake_s + terr_freeze_wake_ease_s
-            print(f"[陣取りモード] 解凍: 1台目 0.0 / 2台目 {_t2:.1f} / 3台目 {_t3:.1f} / 残り {_t4:.1f} 秒〜")
-        elif _fz == 'wake' and _fzt >= getattr(mode_menu, 'terr_fz_end', 10.0):
-            _fz = mode_menu.terr_fz_state = None
-
-        # 解凍中の筒ごとの重み (0=まだ寝ている .. 1=完全に復帰)。見た目と音の両方で使う
-        _wake_w = None
-        if _fz == 'wake':
-            _wake_w = []
-            for _a in agents:
-                _wa = getattr(_a, 'terr_wake_at', sim_time)
-                _wake_w.append(0.0 if sim_time < _wa
-                               else min(1.0, (sim_time - _wa) / max(1e-6, terr_freeze_wake_ease_s)))
-
-        # 凍結中は dt=0 で呼ぶ: 状態もティックもしゃべりも進まない
-        terr_ticks, terr_auto_shifted = terr.step(0.0 if _fz == 'hold' else dt)
+        terr_ticks, terr_auto_shifted = terr.step(dt)
         terr_says = terr.utterances()
         if terr_auto_shifted:
             print(f"[陣取りモード] 自動転換 (通算{terr.shift_count}回)  R={terr.R:.2f} C={terr.C:.2f}")
@@ -6458,8 +6301,6 @@ while True:
                 if terr.melt_fired:
                     tclient.melt()
                 for _li in terr.lands:
-                    if _wake_w is not None and _wake_w[_li] <= 0.0:
-                        continue   # まだ寝ている筒の着地音は鳴らさない
                     tclient.land(_li, terr.op_unwrap[_li])   # 底に着いた瞬間: ドン
                 if terr.phase_event == 'crystallize':
                     _pcs = terr.camp_pcs()
@@ -6472,42 +6313,18 @@ while True:
                         tclient.split(0)
                     elif terr.schism_event[0] == 'secede':
                         tclient.split(1)
-                _live = (terr.op_unwrap, terr.conviction(), terr.fat_out(),
-                         terr.ht, terr.tilt, terr.omega_rad_s(),
-                         terr.facing(0.0))  # 正面方位(rad)。合わなければここを回す
-                _snap = getattr(mode_menu, 'terr_fz_snap', None)
-                if _wake_w is not None and _snap is not None:
-                    # まだ寝ている筒は凍結時の値のまま送る = その筒の音は静止したまま
-                    _live = tuple([_s[_q] + (_l[_q] - _s[_q]) * _wake_w[_q]
-                                   for _q in range(len(agents))]
-                                  for _s, _l in zip(_snap, _live))
-                tclient.send_state(*_live)
+                tclient.send_state(terr.op_unwrap, terr.conviction(), terr.fat_out(),
+                                   terr.ht, terr.tilt, terr.omega_rad_s(),
+                                   terr.facing(0.0))  # 正面方位(rad)。合わなければここを回す
                 for _ti, _vel in terr_ticks:
-                    if _wake_w is not None and _wake_w[_ti] <= 0.0:
-                        continue
                     tclient.tick(_ti, _vel, terr_pitch_class(terr.op_unwrap[_ti]))
                 for _si, _dur, _amp in terr_says:
-                    if _wake_w is not None and _wake_w[_si] <= 0.0:
-                        continue
                     _conv = math.hypot(terr.vx[_si], terr.vy[_si])
                     tclient.say(_si, _dur, _amp, terr.op_unwrap[_si], _conv,
                                 terr.w[_si], terr.ht[_si], terr.tilt[_si])
                 mode_menu.territory_frame += 1
                 if mode_menu.territory_frame % 4 == 0:
-                    # 凍結中は秩序パラメータも止める: SC のゲートが漂って音が揺れるのを防ぐ
-                    _gr, _gc = terr.R, terr.C
-                    _rc = getattr(mode_menu, 'terr_fz_rc', None)
-                    if _rc is not None and _fz is not None:
-                        _gw = 0.0 if _fz == 'hold' else (sum(_wake_w) / max(1, len(_wake_w)))
-                        _gr = _rc[0] + (_gr - _rc[0]) * _gw
-                        _gc = _rc[1] + (_gc - _rc[1]) * _gw
-                    # 静止中はマスターゲインを持ち上げて「残る音」を聞かせる
-                    _gdb = 0.0
-                    if _fz == 'hold':
-                        _gdb = terr_freeze_gain_db
-                    elif _fz == 'wake' and _wake_w:
-                        _gdb = terr_freeze_gain_db * (1.0 - sum(_wake_w) / len(_wake_w))
-                    tclient.send_global(_gr, _gc, terr.camps, terr.mean_op(), _gdb)
+                    tclient.send_global(terr.R, terr.C, terr.camps, terr.mean_op())
                 # キープアライブ: SCエンジンを途中で再起動してもフェードインが
                 # 自己復旧するよう、シーンONを5秒ごとに再送(冪等)
                 if mode_menu.territory_frame % 100 == 0:
@@ -6519,29 +6336,13 @@ while True:
         # ── モデル状態をロボットへマップ ──
         for k_ag, ag in enumerate(agents):
             # ヨー: モデルの向き(rad, 連続)→度
-            _myaw = math.degrees(terr.th[k_ag]) % 360.0
+            ag.yaw = math.degrees(terr.th[k_ag]) % 360.0
             # ピッチ: tilt +1=下向き(聴衆へ) → VPythonでは負方向
-            _mpitch = max(-60.0, min(60.0, -60.0 * terr.tilt[k_ag]))
+            ag.pitch = max(-60.0, min(60.0, -60.0 * terr.tilt[k_ag]))
             # 高さ: ht 0=天井, 1=降下(確信が強いほど降りてくる)。最低到達点1.9m
             terr_tgt_z = maxZ - terr.ht[k_ag] * (maxZ - vz(1.9))
-            # 解凍中: まだ自分の番が来ていない筒は凍った姿勢のまま。
-            # 来たら ease_s かけてモデルの姿勢へ寄せる (飛ばないように)
-            _blend = 1.0
-            if _fz == 'hold':
-                _blend = 0.0   # 凍結姿勢そのもの。z のイージングも効かせない(順々に止まって見えるのを防ぐ)
-            elif _wake_w is not None:
-                _blend = _wake_w[k_ag]
-            if _blend >= 1.0:
-                ag.yaw, ag.pitch = _myaw, _mpitch
-                _zdes = ag.z + (terr_tgt_z - ag.z) * min(1.0, 3.0 * dt)
-            else:
-                _fy, _fp, _fzz = getattr(ag, 'terr_frozen', (_myaw, _mpitch, ag.z))
-                _dfy = ((_myaw - _fy + 540) % 360) - 180
-                ag.yaw = (_fy + _dfy * _blend) % 360.0
-                ag.pitch = _fp + (_mpitch - _fp) * _blend
-                _zdes = _fzz + (terr_tgt_z - _fzz) * _blend
-            # ウィンチが追える速さで頭打ちにする。これが無いと指令だけ先へ進み、
-            # 実機は遅れたまま「到達地点」へ向かい続けるので、凍結しても順々にしか止まらない
+            # ウィンチが追える速さで頭打ちにする (指令だけ先へ進み実機が遅れるのを防ぐ)
+            _zdes = ag.z + (terr_tgt_z - ag.z) * min(1.0, 3.0 * dt)
             _dzmax = winch_max_speed_mps * terr_z_speed_factor * dt
             ag.z += max(-_dzmax, min(_dzmax, _zdes - ag.z))
             ag.z = max(minZ, min(maxZ, ag.z))
@@ -6559,9 +6360,7 @@ while True:
             # 確信を失った筒は直前の色を保持(確信ゼロ付近の色相はノイズなので
             # 追従させない=溶解・離脱時のランダム色化を防ぐ)
             _conv_k = math.hypot(terr.vx[k_ag], terr.vy[k_ag])
-            # 凍結中は色の追従も止める (1.5秒の平滑が残っていると色だけ漂う)
-            _k = 0.0 if _fz == 'hold' else (
-                min(1.0, dt / terr_color_smooth_s) * max(0.12, min(1.0, _conv_k / 0.35)))
+            _k = min(1.0, dt / terr_color_smooth_s) * max(0.12, min(1.0, _conv_k / 0.35))
             _c = ag.terr_disp_col + (vector(_r0, _g0, _b0) - ag.terr_disp_col) * _k
             _m = max(_c.x, _c.y, _c.z)
             if _m > 1e-6:
