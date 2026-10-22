@@ -114,7 +114,7 @@ manual_global = {}    # 空の辞書で初期化（Noneではなく）
 separationFactor = 0.14
 cohesionFactor   = 1.76
 rotationSpeed    = 0.0        # 3Dカメラの周回速度。0で視点固定 (2026-09-09 停止)。回すなら 0.001
-cameraAngle      = -math.pi/2 if layout == "iamas" else 0.0        # 固定視点の方位 (rad)。0 = 配置図の右側(PC側)から見る = gen_node_nmw.py の FRONT="right"。left→math.pi, bottom→-math.pi/2, top→math.pi/2。iamas: 図面下側(菅実花側)の観客動線から奥を見る (2026-10-22)
+cameraAngle      = (-math.pi/2 - math.radians(26)) if layout == "iamas" else 0.0        # 固定視点の方位 (rad)。0 = 配置図の右側(PC側)から見る = gen_node_nmw.py の FRONT="right"。left→math.pi, bottom→-math.pi/2, top→math.pi/2。iamas: 図面の矢印どおり南南西から北北東へ斜めに見る (真南-26°, 2026-10-22)
 # 会場の方位 (2026-09-28 実測)。ロボットのコンパスはキャリブレーション済みで、0 を送ると北を向く。
 # シムの yaw は 0=手前(+x)・反時計回り、コンパスは 0=北・時計回りなので、送信時に反転して合わせる
 # (send_robot_data)。会場が変わったらこの1つだけ測り直せばよい。
