@@ -61,7 +61,7 @@ VENUES = {
     # room = 部屋の床/天井サイズ (x, y) [m] (3D表示)。audience_area = 観客(シミュレーション/センサー)が動く範囲 (None なら従来どおりロボット配置の広さ)
     "fu":  dict(ceiling=3.0, top=2.8, cable_length_m=None, room=(6.4, 7.6), audience_area=None),   # コモネ
     "nmw": dict(ceiling=4.5, top=4.3, cable_length_m=3.0, room=(7.0, 6.0), audience_area=(7.0, 6.0)),   # New Media Week (吊元 4.5m, カーテンで奥行き(ライン方向x)7m × 横幅(観客から見た左右y)6m)。cable_length_m=3.0 → minZ=1.5: ファーム可動域2.8m(top 4.3基準)の下端。シミュも実機が届かない高さを命令しない
-    "iamas": dict(ceiling=3.39, top=3.2, cable_length_m=3.0, room=(10.0, 11.5), audience_area=(10.0, 11.5)),   # IAMAS30 スイトピアギャラリー右側空間 (2026-11-14〜)。天高3.5m−11cm=吊元3.39m, 最高3.2m。room は図面緑エリア概算(幅10m×奥行き11.5m)の仮置き、設置レイアウト確定後に要更新
+    "iamas": dict(ceiling=3.39, top=3.2, cable_length_m=3.0, room=(10.0, 14.0), audience_area=(10.0, 11.5)),   # IAMAS30 スイトピアギャラリー (2026-11-14〜)。天高3.5m−11cm=吊元3.39m, 最高3.2m。配置キープランU-01: 右室内法2117×1399cm、FUは可動壁より東の幅約10mゾーンで、ユニット5本(各5m)は東西向き・間隔1m・南北センター(500/400/500)・東壁から245cm。作品はゾーンほぼど真ん中なので部屋中央配置の描画でOK。audience_area は南の菅実花エリアを除いた概算仮置き
 }
 venue = VENUES[layout]
 design_top = 2.8   # 振付の設計基準 (コモネの最高高さ)。変更しないこと
@@ -1533,8 +1533,7 @@ with open(node_file, newline="") as f:
         i, j = divmod(k, COLS)
         z = random.uniform(minZ + agent_length/2, maxZ - agent_length/2)
         node_x, node_y = float(row["x"]), float(row["y"])
-        if layout == "iamas":
-            node_x, node_y = node_y, -node_x   # 配置を天から見て時計回りに90度回転 (2026-10-22 ユーザー指定)
+        # iamas: 配置キープラン(U-01)でユニットは東西向き = node_nmw.csv の向きそのまま (+x=東)。回転不要 (2026-10-22)
         # row["id"] に加えて、enumerate の k を idx として渡す
         agents.append(Agent(i, j,
                             node_x, node_y,
