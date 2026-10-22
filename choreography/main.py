@@ -119,7 +119,7 @@ cameraAngle      = (-math.pi/2 - math.radians(26)) if layout == "iamas" else 0.0
 # シムの yaw は 0=手前(+x)・反時計回り、コンパスは 0=北・時計回りなので、送信時に反転して合わせる
 # (send_robot_data)。会場が変わったらこの1つだけ測り直せばよい。
 venue_back_bearing_deg = 170.0   # 観客から見て「奥」の方位 [度]。NMW: 170 = 南
-radius           = 5.5
+radius           = 7.0 if layout == "iamas" else 5.5   # 3Dカメラの作品中心からの距離 [m]。iamas: 少し引いた画角 (2026-10-22)
 cameraHeight     = 1.0
 
 noiseScale   = 0.01
