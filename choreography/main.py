@@ -49,8 +49,8 @@ place = "home"  # "venue" or else  ※会場では "venue" に戻す (2026-08-18
 # ロボット配置: "nmw" = New Media Week (25台, 1mライン5本, node_nmw.csv)
 #              "fu"  = 従来の29台配置 (node.csv)
 # ※ rain/ と territory/ の robots.json も同じ配置にすること (choreography/gen_robots_json.py で再生成)
-layout = "nmw"
-node_file = {"nmw": "node_nmw.csv", "fu": "node.csv"}[layout]
+layout = "iamas"
+node_file = {"nmw": "node_nmw.csv", "fu": "node.csv", "iamas": "node_nmw.csv"}[layout]   # iamas: 配置未確定につき当面 nmw の25台を流用
 
 # 会場の高さ (2026-09-09): 振付はコモネ(天高3.0m, 最高設定2.8m)基準で書かれている。
 #   venue_top   … その会場でロボットが上がる最高高さ [m] (= maxZ)
@@ -61,6 +61,7 @@ VENUES = {
     # room = 部屋の床/天井サイズ (x, y) [m] (3D表示)。audience_area = 観客(シミュレーション/センサー)が動く範囲 (None なら従来どおりロボット配置の広さ)
     "fu":  dict(ceiling=3.0, top=2.8, cable_length_m=None, room=(6.4, 7.6), audience_area=None),   # コモネ
     "nmw": dict(ceiling=4.5, top=4.3, cable_length_m=3.0, room=(7.0, 6.0), audience_area=(7.0, 6.0)),   # New Media Week (吊元 4.5m, カーテンで奥行き(ライン方向x)7m × 横幅(観客から見た左右y)6m)。cable_length_m=3.0 → minZ=1.5: ファーム可動域2.8m(top 4.3基準)の下端。シミュも実機が届かない高さを命令しない
+    "iamas": dict(ceiling=3.39, top=3.2, cable_length_m=3.0, room=(10.0, 11.5), audience_area=(10.0, 11.5)),   # IAMAS30 スイトピアギャラリー右側空間 (2026-11-14〜)。天高3.5m−11cm=吊元3.39m, 最高3.2m。room は図面緑エリア概算(幅10m×奥行き11.5m)の仮置き、設置レイアウト確定後に要更新
 }
 venue = VENUES[layout]
 design_top = 2.8   # 振付の設計基準 (コモネの最高高さ)。変更しないこと
@@ -113,7 +114,7 @@ manual_global = {}    # 空の辞書で初期化（Noneではなく）
 separationFactor = 0.14
 cohesionFactor   = 1.76
 rotationSpeed    = 0.0        # 3Dカメラの周回速度。0で視点固定 (2026-09-09 停止)。回すなら 0.001
-cameraAngle      = 0.0        # 固定視点の方位 (rad)。0 = 配置図の右側(PC側)から見る = gen_node_nmw.py の FRONT="right"。left→math.pi, bottom→-math.pi/2, top→math.pi/2
+cameraAngle      = -math.pi/2 if layout == "iamas" else 0.0        # 固定視点の方位 (rad)。0 = 配置図の右側(PC側)から見る = gen_node_nmw.py の FRONT="right"。left→math.pi, bottom→-math.pi/2, top→math.pi/2。iamas: 図面下側(菅実花側)の観客動線から奥を見る (2026-10-22)
 # 会場の方位 (2026-09-28 実測)。ロボットのコンパスはキャリブレーション済みで、0 を送ると北を向く。
 # シムの yaw は 0=手前(+x)・反時計回り、コンパスは 0=北・時計回りなので、送信時に反転して合わせる
 # (send_robot_data)。会場が変わったらこの1つだけ測り直せばよい。
@@ -161,7 +162,7 @@ base_sat   = 1.0   # ← 追加：彩度のデフォルト
 # ========================================================
 # 定数
 # ========================================================
-ROWS, COLS     = (5, 5) if layout == "nmw" else (7, 7)   # 格子隣接(boids用)の行列数
+ROWS, COLS     = (7, 7) if layout == "fu" else (5, 5)   # 格子隣接(boids用)の行列数 (fu=29台7x7相当, それ以外=node_nmw.csv 25台5x5)
 maxZ = venue["top"]                       # 会場の最高高さ (fu 2.8 / nmw 4.3)
 minZ = max(0.0, venue["ceiling"] - venue["cable_length_m"]) if venue["cable_length_m"] else 0.0
 sepDist        = 0.4
@@ -1531,9 +1532,12 @@ with open(node_file, newline="") as f:
     for k, row in enumerate(csv.DictReader(f)):
         i, j = divmod(k, COLS)
         z = random.uniform(minZ + agent_length/2, maxZ - agent_length/2)
+        node_x, node_y = float(row["x"]), float(row["y"])
+        if layout == "iamas":
+            node_x, node_y = node_y, -node_x   # 配置を天から見て時計回りに90度回転 (2026-10-22 ユーザー指定)
         # row["id"] に加えて、enumerate の k を idx として渡す
         agents.append(Agent(i, j,
-                            float(row["x"]), float(row["y"]),
+                            node_x, node_y,
                             z,
                             int(row["id"]),
                             idx=k))
