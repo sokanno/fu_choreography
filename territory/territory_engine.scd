@@ -637,6 +637,17 @@ s.waitForBoot {
 	"FU territory engine ready: % voices, % output, OSC on port %"
 	.format(~nBots, if(devStereo, "stereo (dev fold)", "4ch"), NetAddr.langPort).postln;
 };
+
+// ---- 縮む部屋 (press) エンジンを同じ sclang に同居させる (あれば) ----
+// launchd はこのファイルしか起動しないので、ここで load して両シーンの音を賄う。
+// 環境変数は ~pr 系、OSC は /press 系で衝突しない。sclang はファイル全体を
+// 1つの式として読むため、別ブロックにせずこのブロックの末尾で load する
+{ |p|
+	if(File.exists(p)) {
+		p.load;
+		"press engine loaded from territory engine".postln;
+	};
+}.value(dir.dirname +/+ "press" +/+ "press_engine.scd");
 )
 
 /* ---------------------------------------------------------------------------

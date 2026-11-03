@@ -38,7 +38,12 @@ cat > "$PLIST" <<EOF
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$DIR/launchd_wrapper.sh</string>
+    <!-- シェルスクリプトを直接読ませない: ~/Documents 配下だと macOS の保護で
+         zsh がファイルを開けない (can't open input file)。コマンド文字列で渡し、
+         .scd は sclang(SuperCollider.app, フルディスクアクセス要)に開かせる -->
+    <string>/bin/zsh</string>
+    <string>-c</string>
+    <string>pkill -x scsynth; n=0; while lsof -nP -iUDP:57120 >/dev/null 2>&amp;1 &amp;&amp; [ \$n -lt 20 ]; do sleep 1; n=\$((n+1)); done; exec /Applications/SuperCollider.app/Contents/MacOS/sclang "$DIR/territory_engine.scd"</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

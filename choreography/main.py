@@ -42,6 +42,24 @@ except Exception as _e:
     print(f"[territory] import失敗（陣取りモードは無効）: {_e}")
     TERRITORY_AVAILABLE = False
 
+# 縮む部屋 (パントマイム): モデルと音響クライアントは press/ に (rain/territory と同じ流儀)
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "press"))
+try:
+    from press_model import PressModel, SQUEEZE_S as PRESS_SQUEEZE_S
+    from press_client import PressClient
+    PRESS_AVAILABLE = True
+except Exception as _e:
+    print(f"[press] import失敗（縮む部屋モードは無効）: {_e}")
+    PRESS_AVAILABLE = False
+# 潰し切る高さ [m]。z_anchor(2.0) 以下の人基準の高さなので全会場共通 (vz不要)
+press_crush_z = 1.5   # 潰し高さ: 目の高さくらい
+# 色: ストレス0=のんびり青 → 1=焦りの赤 (モデルのstressで補間)。
+# 解放後は安堵の暖色、休息はさらに暗く。バウンス発光は白
+press_col_calm  = (0.13, 0.30, 0.55)
+press_col_alarm = (0.72, 0.10, 0.07)
+press_base_warm = (0.43, 0.38, 0.29)
+press_base_rest = (0.18, 0.19, 0.23)
+
 #=========================================================
 # ここはどこか
 place = "home"  # "venue" or else  ※会場では "venue" に戻す (2026-08-18 自宅テストのためlocalhostへ)
@@ -113,14 +131,14 @@ manual_global = {}    # 空の辞書で初期化（Noneではなく）
 
 separationFactor = 0.14
 cohesionFactor   = 1.76
-rotationSpeed    = 0.0        # 3Dカメラの周回速度。0で視点固定 (2026-09-09 停止)。回すなら 0.001
+rotationSpeed    = 0.001      # 3Dカメラの周回速度。0で視点固定。0.001 ≈ 1周5分 (2026-11-03 再開)
 cameraAngle      = (-math.pi/2 - math.radians(26)) if layout == "iamas" else 0.0        # 固定視点の方位 (rad)。0 = 配置図の右側(PC側)から見る = gen_node_nmw.py の FRONT="right"。left→math.pi, bottom→-math.pi/2, top→math.pi/2。iamas: 図面の矢印どおり南南西から北北東へ斜めに見る (真南-26°, 2026-10-22)
 # 会場の方位 (2026-09-28 実測)。ロボットのコンパスはキャリブレーション済みで、0 を送ると北を向く。
 # シムの yaw は 0=手前(+x)・反時計回り、コンパスは 0=北・時計回りなので、送信時に反転して合わせる
 # (send_robot_data)。会場が変わったらこの1つだけ測り直せばよい。
 venue_back_bearing_deg = 170.0   # 観客から見て「奥」の方位 [度]。NMW: 170 = 南
 radius           = 7.0 if layout == "iamas" else 5.5   # 3Dカメラの作品中心からの距離 [m]。iamas: 少し引いた画角 (2026-10-22)
-cameraHeight     = 1.0
+cameraHeight     = 1.5        # = press_crush_z (潰れる高さと同じ目線 2026-11-03。元: 1.0)
 
 noiseScale   = 0.01
 noiseSpeed   = 0.01
@@ -552,7 +570,8 @@ print(f"[Heartbeat] fu/device/+/heartbeat を監視開始 (timeout={heartbeat_ti
 # 3Dビュー（左上）
 # ========================================================
 scene3d = canvas(
-    width=1200, height=800, #     width=800, height=533,
+    width=1680, height=1050, # 一時的に拡大 (2026-11-03 シム確認用)。元: 1200x800
+
     background=color.gray(0.2),
     caption="",
     align='right',
@@ -655,7 +674,8 @@ modes = ["マニュアルモード",
          "ホタルモード",
          "The two of us",
          "見えない蝶々モード",
-         "陣取りモード"]
+         "陣取りモード",
+         "縮む部屋"]
         #  "舞台挨拶モード"]
 mode_menu = menu(
     choices=modes,
@@ -693,6 +713,20 @@ sensor_btn = button(
     canvas=ui,
     text="Sensor OFF",        # 初期表示
     bind=toggle_sensor
+)
+
+# 縮む部屋: 仮想壁の3D描画トグル (シミュレータ専用。実機には壁は無い)
+press_show_walls = True
+
+def toggle_press_walls(b):
+    global press_show_walls
+    press_show_walls = not press_show_walls
+    b.text = "壁表示 ON" if press_show_walls else "壁表示 OFF"
+
+press_walls_btn = button(
+    canvas=ui,
+    text="壁表示 ON",
+    bind=toggle_press_walls
 )
 
 
@@ -6387,6 +6421,133 @@ while True:
             update_downlight_display(ag)
             send_queue.put(ag)
 
+    elif mode_menu.selected == "縮む部屋" and PRESS_AVAILABLE:
+        # ========================================================
+        # 縮む部屋モード: パントマイム — 上下から見えない壁が迫り、
+        # 筒がバウンスで壁を可視化 → 潰され微振動 → 壁消滅でエコーと共に離散。
+        # モデルは press/press_model.py、音響は press_engine.scd (/press/*, 無くても動く)
+        # ========================================================
+        if not getattr(mode_menu, 'press_initialized', False):
+            print("[縮む部屋] 初期化開始")
+            mode_menu.press_initialized = True
+            mode_menu.press_model = PressModel(
+                [(ag.x - centerX, ag.y - centerY) for ag in agents],
+                [ag.z for ag in agents],
+                min_z=minZ, max_z=maxZ, crush_z=press_crush_z,
+                winch_speed=winch_max_speed_mps, agent_length=agent_length)
+            mode_menu.press_frame = 0
+            mode_menu.press_active = True
+            mode_menu.press_cols = [vector(*press_col_calm) for _ in agents]
+            try:
+                mode_menu.press_client = PressClient()
+                mode_menu.press_client.scene(True)
+                mode_menu.press_client.reset()
+            except Exception as e:
+                print(f"[縮む部屋] 音響なしで続行: {e}")
+                mode_menu.press_client = None
+            # 見えない壁の3D表示 (シミュレータ専用、実機には存在しない)
+            if not hasattr(mode_menu, 'press_wall_boxes'):
+                mode_menu.press_wall_boxes = [
+                    box(canvas=scene3d, pos=vector(centerX, centerY, maxZ),
+                        size=vector(venue["room"][0] * 0.75, 0.02, venue["room"][1] * 0.6),
+                        color=vector(0.65, 0.68, 0.78), opacity=0.14, visible=False)
+                    for _ in range(2)]
+            for ag in agents:
+                ag.autonomous_mode = False
+            print(f"[縮む部屋] {len(agents)}本で開始 (閉塞→圧搾→解放のサイクル)")
+
+        pm = mode_menu.press_model
+        pclient = mode_menu.press_client
+
+        # ── モデルを1ステップ進める ──
+        pm.step(dt)
+        if pm.phase_event == 'squeeze':
+            print(f"[縮む部屋] 圧搾: gap={pm.gap_c:.2f}m — 微振動{PRESS_SQUEEZE_S:.1f}s")
+        elif pm.phase_event == 'release':
+            print("[縮む部屋] 解放: 壁が消えた。エコーの中で離散")
+        elif pm.phase_event == 'rest':
+            print("[縮む部屋] 静止: 次のサイクルまで休息")
+        elif pm.phase_event == 'cycle':
+            print("[縮む部屋] 新しい壁が迫り始める")
+
+        # ── 音響へ送信 ──
+        if pclient is not None:
+            try:
+                for _bi, _bvel, _bgap, _bwall, _bhz in pm.bounces:
+                    pclient.bounce(_bi, _bvel, _bgap, _bwall, _bhz)
+                if pm.phase_event == 'squeeze':
+                    pclient.squeeze(PRESS_SQUEEZE_S, pm.gap_c)
+                elif pm.phase_event == 'release':
+                    pclient.release()
+                elif pm.phase_event == 'cycle':
+                    pclient.reset()
+                mode_menu.press_frame += 1
+                if mode_menu.press_frame % 4 == 0:
+                    pclient.gap(pm.gap_c, pm.progress, pm.top.zc, pm.bot.zc)
+                # キープアライブ: エンジン再起動後も5秒ごとのシーンONで自己復旧
+                if mode_menu.press_frame % 100 == 0:
+                    pclient.scene(True)
+            except Exception as e:
+                print(f"[縮む部屋] OSC送信エラー: {e}")
+                mode_menu.press_client = None
+
+        # ── 壁の3D表示を更新 ──
+        _planes = pm.wall_planes()
+        for _wk, _wbox in enumerate(mode_menu.press_wall_boxes):
+            if _planes is None or not press_show_walls:
+                _wbox.visible = False
+            else:
+                _zc, _sx, _sy = _planes[_wk]
+                _n = vector(-_sx, -_sy, 1.0).norm()
+                _a = cross(vector(0, 1, 0), _n).norm()
+                _wbox.axis = _a * venue["room"][0] * 0.75
+                _wbox.up = _n
+                _wbox.size = vector(venue["room"][0] * 0.75, 0.02, venue["room"][1] * 0.6)
+                _wbox.pos = vector(centerX, centerY, _zc)
+                _wbox.visible = True
+
+        # ── 筒へマップ ──
+        # 地色: 個体の興奮で青(まだ打たれていない/落ち着いた)→赤(打たれて興奮)。
+        # 解放=暖色、休息=暗く (フェーズの気分だけ全体共有)
+        _calm = vector(*press_col_calm)
+        _alarm = vector(*press_col_alarm)
+
+        for k_ag, ag in enumerate(agents):
+            ag.z = pm.z[k_ag]
+            ag.yaw = pm.yaw[k_ag] % 360.0
+            ag.pitch = max(-60.0, min(60.0, pm.pitch[k_ag]))
+            if pm.phase == 'release':
+                _tgt = vector(*press_base_warm)
+            elif pm.phase == 'rest':
+                _tgt = vector(*press_base_rest)
+            else:
+                _e = pm.excite[k_ag]
+                _tgt = _calm * (1.0 - _e) + _alarm * _e
+            # 白熱: 赤を超えて白へ。潰しで最大、解放でフェードアウト (モデル側で冷める)
+            _h = pm.heat[k_ag]
+            if _h > 0.001:
+                _tgt = _tgt * (1.0 - _h) + vector(1, 1, 1) * _h
+            _c = mode_menu.press_cols[k_ag]
+            _c += (_tgt - _c) * min(1.0, dt / 0.8)
+            mode_menu.press_cols[k_ag] = _c
+            # バウンスの瞬間は白ではなく「その時の固有色」のまま明るく発光。
+            # 増光は控えめ (×1.9): 最大の明るさ=白は潰しの白熱に取っておく
+            _f = min(1.0, pm.flash[k_ag])
+            _b = 1.0 + 0.9 * _f
+            press_color = vector(min(1.0, _c.x * _b),
+                                 min(1.0, _c.y * _b),
+                                 min(1.0, _c.z * _b))
+            ag.body.color = press_color
+            for _ld3, _ld2, _ in ag.leds:
+                _ld3.color = _ld2.color = press_color
+            ag.current_color = press_color
+            ag.target_downlight = 0.0
+
+            update_geometry(ag)
+            ag.display()
+            update_downlight_display(ag)
+            send_queue.put(ag)
+
     elif mode_menu.selected == "マニュアルモード":
         # マニュアルモードの処理
         process_manual_commands()
@@ -6409,7 +6570,7 @@ while True:
     scene3d.camera.pos  = vector(camX, camY, cameraHeight)
     scene3d.camera.axis = vector(centerX-camX,
                                  centerY-camY,
-                                 ((minZ+maxZ)/2)-cameraHeight)
+                                 press_crush_z-cameraHeight)   # 注視点も潰れ高さ = 水平目線
 
     # --- after -------------------------------------------------
     if sensor_mode and sensor_people:
@@ -6463,6 +6624,18 @@ while True:
                 pass
             mode_menu.territory_active = False
         mode_menu.territory_initialized = False
+
+    if mode_menu.selected != "縮む部屋":
+        if getattr(mode_menu, 'press_active', False):
+            try:
+                if mode_menu.press_client is not None:
+                    mode_menu.press_client.scene(False)
+            except Exception:
+                pass
+            mode_menu.press_active = False
+            for _wbox in getattr(mode_menu, 'press_wall_boxes', []):
+                _wbox.visible = False
+        mode_menu.press_initialized = False
 
     # ─── デッドノード表示更新 ──────────────────────────
     alive_set = get_alive_node_ids()

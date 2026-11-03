@@ -23,7 +23,7 @@ params = {
     "audience_movement": 0.50,
     "detect_radius":   2.50,
     "empty_radius":    0.0,  # 初期値は調整してください
-    "menu":              0,    # ドロップダウン用メニュー名
+    "menu":              9,    # ドロップダウン用メニュー名 (一時的に9=縮む部屋で起動 2026-11-03。戻す: 0)
     "pause":             0.0,   # 0: 実行, 1: 一時停止
     "fish_align" : 0.5,
     "fish_sep"   : 0.35,
