@@ -280,7 +280,7 @@ SOUND_TURN_TIME     = 0.5   # ← ★ 完全に振り向くまでに使える時
 fish_align_factor  = 0.5    # 向きそろえ強度
 # 群全体の平均高さのゆらぎ (2026-09-09, NMW): 基準高さの上に 0〜fish_school_drift_range [m] を Perlin ノイズで上乗せ
 # → 群の動く範囲が上方向に +1m 広がり、平均高さがゆっくり上下する。コモネは 0 で従来どおり
-fish_school_drift_range = 0.0 if layout == "fu" else 1.0   # [m]
+fish_school_drift_range = 0.0 if layout == "fu" else (1.9 if layout == "iamas" else 1.0)   # [m] (IAMAS: 帯0.5〜3.2mに拡大)
 fish_base_no_person_nmw = 2.5   # NMW の魚群の基準高さ [m] (人検出なし。帯 = 基準-0.4 〜 基準+1.0+0.4 = 2.1〜3.9m)
 # 天上天下: 位相速度 [rad/s] (すれ違い間隔 = π/速度)。NMW は振幅が大きいので遅め (2026-09-09)
 # 回る天井: 夕焼けで赤くなる側。+1 = +x 端 (コモネ従来)、-1 = -x 端 (NMW では観客から見て奥、2026-09-09)
@@ -288,12 +288,12 @@ sunset_x_sign = 1.0 if layout == "fu" else -1.0
 # 回る天井: 空の色彩サイクル(夜→朝→昼→夕→夜)の1日の長さ [s] (2026-09-28: 120→150)
 ceiling_day_length_s = 150.0
 # 回る天井: 面の回転速度の倍率。NMW は高低差が vdz で約2.9倍になり各筒の上下が速く見えるので半分に (2026-09-09)
-plane_rot_speed_scale = 1.0 if layout == "fu" else 0.5
+plane_rot_speed_scale = 1.0 if layout == "fu" else (0.67 if layout == "iamas" else 0.5)   # 高低差が vdz 倍(iamas 1.5 / nmw 2.9)になる分、回転を落とす
 # 回る天井: True なら面が上限 maxZ を超える分だけ面全体を下げ、上側が平らに並ぶのを避ける (コモネは高さ制限ゆえ従来どおりクリップ)
 plane_keep_below_top = (layout != "fu")
 plane_spread_amp = 0.0   # 回る天井の面の高低差の半分 [m] (毎フレーム更新、角速度の制限に使う)
-plane_min_z = minZ if layout == "fu" else 2.0   # 回る天井の一番低い筒の下限 [m] (NMW: 2.0、ユーザー指定 2026-09-09)
-tenge_speed_init  = 0.7 if layout == "fu" else 0.4          # 初期値 (fu 4.5 s / nmw 7.9 s 間隔)
+plane_min_z = minZ if layout == "fu" else (0.5 if layout == "iamas" else 2.0)   # 下限 [m] (NMW:2.0 / IAMAS:0.5=余白空間を全部使う 2026-11-03)
+tenge_speed_init  = 0.7 if layout == "fu" else (0.25 if layout == "iamas" else 0.4)          # 初期値 (IAMAS: 振幅大なので遅め)
 # 天上天下: 孤立に戸惑って他の筒を見回す動き (2026-09-29)。Group B の一部だけに付ける。
 # 一定時間ごとに「見る相手」を選び直し、その相手へヨーとピッチを向ける。
 # 相手が自分より高ければ見上げ、低ければ見下ろす形になる。すれ違いのたびに誰が戸惑うか引き直す
@@ -302,8 +302,19 @@ tenge_confused_gaze_s   = (0.5, 1.4)  # 一人を見ている時間 [s] の範�
 tenge_confused_leader_p = 0.35        # 見る相手がリーダー(A)になる確率。A は高さが違うので見上げ/見下ろしになる
 tenge_confused_yaw_dps  = 150.0       # 首を横に振る速さ [度/秒] (回る天井は 45-180 で回しているので余裕内)
 tenge_confused_pitch_dps = 70.0       # 見上げ/見下ろしの速さ [度/秒] (横より落ち着かせる)
-tenge_speed_range = (0.5, 0.8) if layout == "fu" else (0.3, 0.5)   # すれ違いごとの再抽選範囲 (fu 3.9–6.3 s / nmw 6.3–10.5 s)
-fish_base_no_person = vz(2.0) if layout == "fu" else fish_base_no_person_nmw   # 人がいない時の基準高さ
+tenge_speed_range = (0.5, 0.8) if layout == "fu" else ((0.2, 0.3) if layout == "iamas" else (0.3, 0.5))   # IAMAS: 最遅が遅すぎたので下限0.15→0.2 (2026-11-03)
+fish_base_no_person = vz(2.0) if layout == "fu" else (0.9 if layout == "iamas" else fish_base_no_person_nmw)   # 人がいない時の基準高さ (IAMAS: 0.9 → 帯0.5〜3.2)
+# 魚群: はぐれ個体 (2026-11-03) — 時折1匹が群れを離れ、ポツポツと合流する奴が増え、
+# やがて強い波が来て全体の動きに飲み込まれて戻る
+fish_stray_interval  = (25.0, 50.0)  # はぐれ発生の間隔 [s]
+fish_stray_offset_m  = 1.1           # 群れからの離れ幅 [m] (空いている側へ)
+fish_stray_recruit_s = (4.0, 9.0)    # 合流チェックの間隔 [s]
+fish_stray_recruit_p = 0.6           # そのとき1匹が合流する確率
+fish_stray_max_n     = 6             # はぐれ組の最大匹数
+fish_stray_dur       = (18.0, 32.0)  # はぐれ継続時間 [s] (この後、強い波が来る)
+fish_wave_surge_s    = 7.0           # 飲み込む波の長さ [s]
+fish_wave_surge_amp  = 2.5           # その間の波の振幅倍率
+fish_stray_mix_tau   = 6.0           # 離脱/帰還のなめらかさ [s] (1.1m/6s=0.18m/s でウィンチ内)
 fish_drift_offset = 37.0   # ゆらぎノイズの時間オフセット (モード開始時に「高いところ」から始まるよう選び直す)
 fish_school_drift_speed = 0.04                              # ノイズの時間スケール (小さいほどゆっくり、0.04 ≈ 20–30 s 周期)
 fish_sep_dist      = 0.35   # 距離しきい値
@@ -353,7 +364,7 @@ butterfly_path_noise_speed = 0.2
 butterfly_state = "flying"
 
 # ★飛行時の筒の基準高さ
-butterfly_base_z_flying = vz(2.3)    # flying時の基準高さ
+butterfly_base_z_flying = vz(2.3)    # flying時の基準高さ (IAMASでは蝶は未使用)
 
 # 花に止まる時のパラメータ
 butterfly_rest_interval_min = 20.0
@@ -399,9 +410,10 @@ detect_radius_butterfly = 0.0
 twofus_descend_speed    = 0.8 if layout == "fu" else winch_max_speed_mps   # 降下速度 [m/s] (NMW: まっすぐ 0.2 m/s、2.3 m を約 12 s)
 twofus_descend_bob_amp  = 0.0                                # 降下中の上下ゆらぎ振幅 [m] (0 で一直線。ユーザー判断 2026-09-09: 降下は揺らさない)
 twofus_descend_bob_hz   = 0.12                               # ゆらぎの基本周波数 [Hz]
-twofus_target_z         = vz(2.0) if layout == "fu" else 2.5 # アクティブ筒の目標高さ [m] (NMW: 2026-09-28 現場で底辺を50cm上げ 2.0→2.5)
-twofus_bob_min          = vz(1.8) if layout == "fu" else 2.3 # 上下動の下限 [m] (NMW: 同上 1.8→2.3。実効下限はクランプで -0.1 の 2.2 m)
-twofus_bob_max          = 2.2 if layout == "fu" else 2.7     # 上下動の上限 [m] (帯の幅 0.4 m は保つ。vz() で伸ばすと到着判定に届かず降下フェーズで詰まるので実寸で指定)
+twofus_target_z         = vz(2.0) if layout == "fu" else (1.4 if layout == "iamas" else 2.5) # アクティブ筒の目標高さ [m] (IAMAS: 下限1.2指示 2026-11-03)
+twofus_bob_min          = vz(1.8) if layout == "fu" else (1.2 if layout == "iamas" else 2.3) # 上下動の下限 [m] (IAMAS: 1.2、ユーザー指定)
+twofus_bob_max          = 2.2 if layout == "fu" else (1.6 if layout == "iamas" else 2.7)     # 上下動の上限 [m] (帯の幅 0.4 m は保つ)
+twofus_z_off_max        = 0.6 if layout == "iamas" else 0.0   # 降下高さの個体差 [m] (IAMAS: 基準1.4+0〜0.6 → 1.4〜2.0、2026-11-03)
 twofus_mob_z            = maxZ   # モブの高さ（天井）
 twofus_interaction_dur_min = 4.0   # 交信の最短時間 [s]
 twofus_interaction_dur_max = 12.0  # 交信の最長時間 [s]
@@ -481,8 +493,8 @@ firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きい
 
 # 高さ動作パラメータ
 # 待機高さ: NMW では同期するほど下がってくる (色が青→緑になるほど低く、2026-09-09 ユーザー要望)。コモネは従来の固定 2.3
-firefly_z_base_unsynced = vz(2.3) if layout == "fu" else 3.9   # 位相がずれている(青い)時の待機高さ [m] (2026-09-27 現場所感「高低差をもっと広く」で 3.4→3.9)
-firefly_z_base_synced   = vz(2.3) if layout == "fu" else 2.5   # 揃っている(緑の)時の待機高さ [m] (最低) (2026-09-28 現場で底辺を50cm上げ 2.0→2.5、スパン1.9→1.4m)
+firefly_z_base_unsynced = vz(2.3) if layout == "fu" else (3.0 if layout == "iamas" else 3.9)   # 位相がずれている(青い)時の待機高さ [m] (IAMAS: 3.0)
+firefly_z_base_synced   = vz(2.3) if layout == "fu" else (0.8 if layout == "iamas" else 2.5)   # 揃っている(緑の)時の待機高さ [m] (IAMAS: 0.8、スパン2.2m)
 firefly_z_base_smooth   = 1.5     # 待機高さの追従時定数 [s] (スパン拡大に合わせ 0.5→1.5: 実効スルーを従来並みに)
 firefly_z_base = firefly_z_base_unsynced   # トランジション先 (モード開始時の高さ)
 # 高さの振幅: 上下は発光位相(周期 4 s ±20%)に同期するので、振幅/2 × 2π/3.2 s ≤ ウィンチ 0.2 m/s → 振幅 ≤ 0.20 m。
@@ -2277,10 +2289,25 @@ while True:
         print(f"Invalid menu index received: {raw_index}")
         menu_index = 0
 
-    # OSC から受け取った menu インデックスを反映
+    # OSC から受け取った menu インデックスを反映。
+    # 陣取り↔縮む部屋まわりはマニュアルモードを挟まない (2026-11-03):
+    # autoplay は切替時に /menu 0 を3秒挟むが、陣取り→縮む部屋は位置を流用し、
+    # 縮む部屋→次シーンは拡散の余韻からそのままグラデーションさせたいので、
+    # これらのシーン中に来た menu 0 は4秒保留し、続く本命シーンへ直接切り替える
     if menu_index != mode_menu.index:
-        mode_menu.index = menu_index      # ドロップダウンの選択を切り替え
-        on_mode_select(mode_menu)         # 必要なら切り替え処理を手動呼び出し
+        if menu_index == 0 and mode_menu.selected in ("陣取りモード", "縮む部屋"):
+            if not hasattr(mode_menu, 'menu0_hold_until'):
+                mode_menu.menu0_hold_until = sim_time + 4.0
+            if sim_time >= mode_menu.menu0_hold_until:
+                del mode_menu.menu0_hold_until   # 本当にマニュアルへ行きたいらしい
+                mode_menu.index = 0
+                on_mode_select(mode_menu)
+        else:
+            if hasattr(mode_menu, 'menu0_hold_until'):
+                del mode_menu.menu0_hold_until
+                print(f"[menu] マニュアルを挟まず直接切替 → index {menu_index}")
+            mode_menu.index = menu_index      # ドロップダウンの選択を切り替え
+            on_mode_select(mode_menu)         # 必要なら切り替え処理を手動呼び出し
 
 
     # ★★★ MQTT 受信処理を追加 ★★★
@@ -3032,8 +3059,8 @@ while True:
         # ─────────────────────────────────────────────
         # max_height = 2.2  # 物理的制約により固定
         # min_height = 1.0  # 人がいない場合の最低高さ
-        max_height = vz(2.75)  # 物理的制約により固定 (コモネ基準)
-        min_height = vz(1.85) if layout == "fu" else 2.35  # 最低高さ (NMW: 2026-09-28 現場で 1.85→2.35、50cm上げ)
+        max_height = (maxZ - 0.1) if layout == "iamas" else vz(2.75)  # IAMAS: 3.1 まで
+        min_height = vz(1.85) if layout == "fu" else (0.5 if layout == "iamas" else 2.35)  # 最低高さ (IAMAS: 0.5)
         # 振幅は max_height - center_z まで抽選されるので、上下動はちょうど min_height〜max_height を使う
         center_z = (max_height + min_height) / 2  # 中間点を動的に計算
         # 人がいるかどうかを確認
@@ -3548,6 +3575,46 @@ while True:
             # 群全体の平均高さのゆらぎ (全筒共通、0〜fish_school_drift_range m)
             _n = max(-1.0, min(1.0, pnoise1(sim_time * fish_school_drift_speed + fish_drift_offset, octaves=2) / 0.7))
             fish_school_drift = fish_school_drift_range * (_n + 1.0) / 2.0
+
+            # ── はぐれ個体の状態機械: 離脱 → ポツポツ合流 → 強い波に飲まれて帰還 ──
+            if getattr(mode_menu, 'fish_mode_initialized', False):
+                _st = getattr(mode_menu, 'fish_stray_state', 'none')
+                if _st == "none":
+                    mode_menu.fish_wave_surge = 1.0
+                    if sim_time >= mode_menu.fish_stray_next_t:
+                        _leader = random.choice(agents)
+                        mode_menu.fish_stray_members = {_leader}
+                        _center = fish_base_no_person + fish_school_drift
+                        mode_menu.fish_stray_dir = 1.0 if _center < (minZ + maxZ) / 2.0 else -1.0
+                        mode_menu.fish_stray_end = sim_time + random.uniform(*fish_stray_dur)
+                        mode_menu.fish_stray_recruit_t = sim_time + random.uniform(*fish_stray_recruit_s)
+                        mode_menu.fish_stray_state = "stray"
+                        print(f"[魚群] はぐれ発生: node {_leader.node_id} が群れを離れる "
+                              f"({'上' if mode_menu.fish_stray_dir > 0 else '下'}へ {fish_stray_offset_m}m)")
+                elif _st == "stray":
+                    if sim_time >= mode_menu.fish_stray_recruit_t:
+                        mode_menu.fish_stray_recruit_t = sim_time + random.uniform(*fish_stray_recruit_s)
+                        _mem = mode_menu.fish_stray_members
+                        if len(_mem) < fish_stray_max_n and random.random() < fish_stray_recruit_p:
+                            _cands = [a for a in agents if a not in _mem]
+                            if _cands:
+                                _j = random.choice(_cands)
+                                _mem.add(_j)
+                                print(f"[魚群] node {_j.node_id} がはぐれ組に合流 (計{len(_mem)}匹)")
+                    if sim_time >= mode_menu.fish_stray_end:
+                        mode_menu.fish_stray_state = "wave"
+                        mode_menu.fish_wave_t0 = sim_time
+                        mode_menu.fish_stray_members = set()   # 波に飲まれて全員群れへ
+                        print("[魚群] 強い波が来る: はぐれ組は全体の動きに飲み込まれる")
+                elif _st == "wave":
+                    _wt = sim_time - mode_menu.fish_wave_t0
+                    _env = math.sin(math.pi * min(1.0, _wt / fish_wave_surge_s))
+                    mode_menu.fish_wave_surge = 1.0 + (fish_wave_surge_amp - 1.0) * _env
+                    if _wt >= fish_wave_surge_s:
+                        mode_menu.fish_wave_surge = 1.0
+                        mode_menu.fish_stray_state = "none"
+                        mode_menu.fish_stray_next_t = sim_time + random.uniform(*fish_stray_interval)
+
             # グローバルなprev_modeの確認（デバッグ用）
             current_prev_mode = getattr(mode_menu, 'global_prev_mode', None)
             
@@ -3557,6 +3624,13 @@ while True:
                 mode_menu.fish_mode_initialized = True
                 mode_menu.fish_transition_start = sim_time
                 mode_menu.fish_transition_duration = 2.0  # 2秒のトランジション
+                # はぐれ個体の状態
+                mode_menu.fish_stray_state = "none"
+                mode_menu.fish_stray_members = set()
+                mode_menu.fish_stray_next_t = sim_time + random.uniform(*fish_stray_interval)
+                mode_menu.fish_wave_surge = 1.0
+                for _ag in agents:
+                    _ag.fish_stray_mix = 0.0
                 # 群のゆらぎを「高いところ」から始める: ノイズの時間オフセットを、今の sim_time で値が最大付近になるよう選ぶ
                 if fish_school_drift_range > 0.0:
                     _best, _best_v = fish_drift_offset, -9.0
@@ -3759,6 +3833,7 @@ while True:
 
                 # 最終的な振幅を計算（既存のロジックそのまま）
                 wave_amplitude = min_amplitude + (max_amplitude - min_amplitude) * amplitude_factor
+                wave_amplitude *= getattr(mode_menu, 'fish_wave_surge', 1.0)   # 飲み込む波
 
                 # 基準高さを計算（既存のロジックそのまま）
                 current_base_height = base_height_without_person + (base_height_with_person - base_height_without_person) * (1.0 - height_factor)
@@ -3790,8 +3865,19 @@ while True:
                     # 波動効果も徐々に適用 (基準はゆらぎ込みの現在値: ランプ終了時に段差が出ないように)
                     ag.z = current_base_height + interpolated_wave * wave_amplitude * wave_eased
                 else:
-                    # 通常時：完全な波動効果
-                    ag.z = target_z_with_wave
+                    # 通常時：完全な波動効果 + はぐれ組のブレンド
+                    _mix_tgt = 1.0 if ag in getattr(mode_menu, 'fish_stray_members', ()) else 0.0
+                    _m = getattr(ag, 'fish_stray_mix', 0.0)
+                    _m += (_mix_tgt - _m) * min(1.0, dt / fish_stray_mix_tau)
+                    ag.fish_stray_mix = _m
+                    if _m > 0.001:
+                        # はぐれは群れの波に同期しない: 自分だけのゆっくりした漂い
+                        _stray_z = (current_base_height
+                                    + mode_menu.fish_stray_dir * fish_stray_offset_m
+                                    + 0.22 * pnoise1(sim_time * 0.22 + ag.node_id * 7.31))
+                        ag.z = target_z_with_wave * (1.0 - _m) + _stray_z * _m
+                    else:
+                        ag.z = target_z_with_wave
 
                 # 高さの制限
                 ag.z = max(minZ, min(maxZ, ag.z))
@@ -5684,6 +5770,8 @@ while True:
                 _hue = random.random()
                 _r, _g, _b = colorsys.hsv_to_rgb(_hue, random.uniform(0.85, 1.0), 1.0)
                 ag.twofus_own_color = vector(_r, _g, _b)
+                # 降りてくる高さの個体差 (IAMAS: 1.4〜2.0 のどこか)
+                ag.twofus_z_off = random.uniform(0.0, twofus_z_off_max)
 
             print(f"  Active pair: {[agents[i].node_id for i in pair]}")
 
@@ -5802,8 +5890,8 @@ while True:
             if phase == "descending":
                 # 降下の床は上下動の目標 (bob_min〜bob_max+0.1) なので、その範囲に入れば到着とみなす
                 _arrive_z = max(twofus_target_z, twofus_bob_max + 0.1) + 0.05
-                arrived_a = ag_a.z <= _arrive_z
-                arrived_b = ag_b.z <= _arrive_z
+                arrived_a = ag_a.z <= _arrive_z + getattr(ag_a, 'twofus_z_off', 0.0)
+                arrived_b = ag_b.z <= _arrive_z + getattr(ag_b, 'twofus_z_off', 0.0)
                 if arrived_a and arrived_b:
                     mode_menu.twofus_phase = "interacting"
                     mode_menu.twofus_interaction_started = sim_time
@@ -5940,7 +6028,7 @@ while True:
 
                 # 帰還完了 & 新規到着を判定
                 left_done = ag_leaving.z >= twofus_mob_z - 0.05
-                new_arrived = getattr(ag_new, 'twofus_new_arrived', False) or ag_new.z <= twofus_target_z + 0.05
+                new_arrived = getattr(ag_new, 'twofus_new_arrived', False) or ag_new.z <= twofus_target_z + getattr(ag_new, 'twofus_z_off', 0.0) + 0.05
 
                 if left_done and new_arrived:
                     # ペア更新
@@ -5990,7 +6078,7 @@ while True:
             if in_transition:
                 # --- トランジション中: 元の位置からターゲットへイージング ---
                 if (is_active_a or is_active_b) and not _gathering:
-                    target_z = twofus_target_z
+                    target_z = twofus_target_z + getattr(ag, 'twofus_z_off', 0.0)
                 else:
                     target_z = twofus_mob_z
                 ag.z = ag.twofus_start_z + (target_z - ag.twofus_start_z) * eased_progress
@@ -6046,8 +6134,9 @@ while True:
                 # --- 新規: 降下中 → 到着後は相手の帰還を待ちながら上下にゆらぐ (2026-09-24: 凍って見えないように) ---
                 _off = ag.node_id * 13.7
                 if not getattr(ag, 'twofus_new_arrived', False):
-                    ag.z = twofus_descend_step(ag, twofus_target_z, sim_time, dt)
-                    if ag.z <= twofus_target_z + 0.05:
+                    _zoff = getattr(ag, 'twofus_z_off', 0.0)
+                    ag.z = twofus_descend_step(ag, twofus_target_z + _zoff, sim_time, dt)
+                    if ag.z <= twofus_target_z + _zoff + 0.05:
                         ag.twofus_new_arrived = True
                     # 降下するにつれフェードイン
                     fade = max(0.0, 1.0 - (ag.z - twofus_target_z) / (twofus_mob_z - twofus_target_z))
@@ -6055,7 +6144,7 @@ while True:
                     ag.twofus_desc_nom = None
                     _bv = (pnoise2(sim_time * 0.15 + _off, _off * 0.7)
                            + pnoise2(sim_time * 0.6 + _off + 500, _off * 0.3) * 0.3 + 1.0) / 2.0
-                    _bt = twofus_bob_min + (twofus_bob_max - twofus_bob_min) * max(0.0, min(1.0, _bv))
+                    _bt = twofus_bob_min + (twofus_bob_max - twofus_bob_min) * max(0.0, min(1.0, _bv)) + getattr(ag, 'twofus_z_off', 0.0)
                     ag.z += (_bt - ag.z) * 0.08
                     fade = 1.0
                 # 降下中・到着後に相手の帰還を待つ間も明滅する
@@ -6101,8 +6190,9 @@ while True:
                 partner_affinity = mode_menu.twofus_affinity_b if is_active_a else mode_menu.twofus_affinity_a
                 dominance = (my_affinity - partner_affinity)
                 bob_bias = -dominance * 0.15
-                bob_target_z = twofus_bob_min + (twofus_bob_max - twofus_bob_min) * bob_val + bob_bias
-                bob_target_z = max(twofus_bob_min - 0.1, min(twofus_bob_max + 0.1, bob_target_z))
+                _zoff = getattr(ag, 'twofus_z_off', 0.0)
+                bob_target_z = twofus_bob_min + (twofus_bob_max - twofus_bob_min) * bob_val + bob_bias + _zoff
+                bob_target_z = max(twofus_bob_min - 0.1 + _zoff, min(twofus_bob_max + 0.1 + _zoff, bob_target_z))
 
                 if phase == "descending":
                     ag.z = twofus_descend_step(ag, bob_target_z, sim_time, dt)
@@ -6467,6 +6557,10 @@ while True:
             print("[縮む部屋] 解放: 壁が消えた。エコーの中で離散")
         elif pm.phase_event == 'rest':
             print("[縮む部屋] 静止: 次のサイクルまで休息")
+            # 1周完了 (拡散おわり) を Max の autoplay へ通知。
+            # autoplay 中なら縮む部屋はここで終わり、次のシーン(魚群)へ直行する
+            osc_client_max.send_message('/scene_done', 1)
+            print("[縮む部屋] /scene_done → Max (autoplay なら次のシーンへ)")
         elif pm.phase_event == 'cycle':
             print("[縮む部屋] 新しい壁が迫り始める")
 
