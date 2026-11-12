@@ -213,10 +213,12 @@ class PressModel:
 
     # ---------------- ヘルパ ----------------
     def _slew(self, i, tgt, dt, vmax=None):
-        """筒 i の z を tgt へ、ウィンチ上限以内で寄せる。"""
+        """筒 i の z を tgt へ、ウィンチ上限以内で寄せる。
+        クランプは目標側に掛ける: 結果をクランプすると、前のシーンで
+        可動域の外(床1.8より下など)にいた筒が初手でテレポートしてしまう。"""
+        tgt = max(self.min_z, min(self.max_z, tgt))
         v = (vmax if vmax is not None else self.winch) * dt
         self.z[i] += max(-v, min(v, tgt - self.z[i]))
-        self.z[i] = max(self.min_z, min(self.max_z, self.z[i]))
 
     def _approach_yaw(self, i, tgt, dt, tau):
         d = (tgt - self.yaw[i] + 180.0) % 360.0 - 180.0
