@@ -52,8 +52,8 @@ except Exception as _e:
     print(f"[press] import失敗（縮む部屋モードは無効）: {_e}")
     PRESS_AVAILABLE = False
 # 潰し切る高さ [m]。z_anchor(2.0) 以下の人基準の高さなので全会場共通 (vz不要)
-press_crush_z = 1.5   # 潰し高さ: 目の高さくらい
-press_min_z   = 1.45  # 縮む部屋の床 [m] (IAMAS: 基本下に人が入れるよう頭上基調に 2026-11-12。全域0.39は撤回)
+press_crush_z = 2.0   # 潰し高さ [m] (床1.8の上。2026-11-12)
+press_min_z   = 1.8   # 縮む部屋の床 [m] (全コレオ共通の床1.8 2026-11-12)
 # 色: ストレス0=のんびり青 → 1=焦りの赤 (モデルのstressで補間)。
 # 解放後は安堵の暖色、休息はさらに暗く。バウンス発光は白
 press_col_calm  = (0.13, 0.30, 0.55)
@@ -139,7 +139,7 @@ cameraAngle      = (-math.pi/2 - math.radians(26)) if layout == "iamas" else 0.0
 # (send_robot_data)。会場が変わったらこの1つだけ測り直せばよい。
 venue_back_bearing_deg = 170.0   # 観客から見て「奥」の方位 [度]。NMW: 170 = 南
 radius           = 7.0 if layout == "iamas" else 5.5   # 3Dカメラの作品中心からの距離 [m]。iamas: 少し引いた画角 (2026-10-22)
-cameraHeight     = 1.5        # = press_crush_z (潰れる高さと同じ目線 2026-11-03。元: 1.0)
+cameraHeight     = 2.0        # = press_crush_z (潰れる高さと同じ目線。元: 1.0)
 
 noiseScale   = 0.01
 noiseSpeed   = 0.01
@@ -293,7 +293,7 @@ plane_rot_speed_scale = 1.0 if layout == "fu" else (0.67 if layout == "iamas" el
 # 回る天井: True なら面が上限 maxZ を超える分だけ面全体を下げ、上側が平らに並ぶのを避ける (コモネは高さ制限ゆえ従来どおりクリップ)
 plane_keep_below_top = (layout != "fu")
 plane_spread_amp = 0.0   # 回る天井の面の高低差の半分 [m] (毎フレーム更新、角速度の制限に使う)
-plane_min_z = minZ if layout == "fu" else (1.6 if layout == "iamas" else 2.0)   # 下限 [m] (IAMAS: 基本頭上、NMW-40cm。全域案0.5はピンとこず撤回 2026-11-12)
+plane_min_z = minZ if layout == "fu" else (1.8 if layout == "iamas" else 2.0)   # 下限 [m] (IAMAS: 全コレオ共通の床1.8 2026-11-12)
 tenge_speed_init  = 0.7 if layout == "fu" else 0.4          # 初期値 (fu 4.5 s / 他 7.9 s 間隔)
 # 天上天下: 孤立に戸惑って他の筒を見回す動き (2026-09-29)。Group B の一部だけに付ける。
 # 一定時間ごとに「見る相手」を選び直し、その相手へヨーとピッチを向ける。
@@ -304,7 +304,7 @@ tenge_confused_leader_p = 0.35        # 見る相手がリーダー(A)になる�
 tenge_confused_yaw_dps  = 150.0       # 首を横に振る速さ [度/秒] (回る天井は 45-180 で回しているので余裕内)
 tenge_confused_pitch_dps = 70.0       # 見上げ/見下ろしの速さ [度/秒] (横より落ち着かせる)
 tenge_speed_range = (0.5, 0.8) if layout == "fu" else (0.3, 0.5)   # すれ違いごとの再抽選範囲
-fish_base_no_person = vz(2.0) if layout == "fu" else (1.6 if layout == "iamas" else fish_base_no_person_nmw)   # 人がいない時の基準高さ (IAMAS: コモネ2.0-0.4 → 帯1.2〜3.0)
+fish_base_no_person = vz(2.0) if layout == "fu" else (2.2 if layout == "iamas" else fish_base_no_person_nmw)   # 人がいない時の基準高さ (IAMAS: 帯1.8〜3.0、床1.8)
 # 魚群: はぐれ個体 (2026-11-03) — 時折1匹が群れを離れ、ポツポツと合流する奴が増え、
 # やがて強い波が来て全体の動きに飲み込まれて戻る
 fish_stray_interval  = (25.0, 50.0)  # はぐれ発生の間隔 [s]
@@ -411,9 +411,9 @@ detect_radius_butterfly = 0.0
 twofus_descend_speed    = 0.8 if layout == "fu" else winch_max_speed_mps   # 降下速度 [m/s] (NMW: まっすぐ 0.2 m/s、2.3 m を約 12 s)
 twofus_descend_bob_amp  = 0.0                                # 降下中の上下ゆらぎ振幅 [m] (0 で一直線。ユーザー判断 2026-09-09: 降下は揺らさない)
 twofus_descend_bob_hz   = 0.12                               # ゆらぎの基本周波数 [Hz]
-twofus_target_z         = vz(2.0) if layout == "fu" else (1.4 if layout == "iamas" else 2.5) # アクティブ筒の目標高さ [m] (IAMAS: 下限1.2指示 2026-11-03)
-twofus_bob_min          = vz(1.8) if layout == "fu" else (1.2 if layout == "iamas" else 2.3) # 上下動の下限 [m] (IAMAS: 1.2、ユーザー指定)
-twofus_bob_max          = 2.2 if layout == "fu" else (1.6 if layout == "iamas" else 2.7)     # 上下動の上限 [m] (帯の幅 0.4 m は保つ)
+twofus_target_z         = vz(2.0) if layout == "fu" else (2.0 if layout == "iamas" else 2.5) # アクティブ筒の目標高さ [m] (IAMAS: 床1.8 2026-11-12)
+twofus_bob_min          = vz(1.8) if layout == "fu" else (1.8 if layout == "iamas" else 2.3) # 上下動の下限 [m] (IAMAS: 全コレオ共通の床1.8)
+twofus_bob_max          = 2.2 if layout == "fu" else (2.2 if layout == "iamas" else 2.7)     # 上下動の上限 [m] (帯の幅 0.4 m は保つ)
 twofus_z_off_max        = 0.6 if layout == "iamas" else 0.0   # 降下高さの個体差 [m] (IAMAS: 基準1.4+0〜0.6 → 1.4〜2.0、2026-11-03)
 twofus_mob_z            = maxZ   # モブの高さ（天井）
 twofus_interaction_dur_min = 4.0   # 交信の最短時間 [s]
@@ -495,7 +495,7 @@ firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きい
 # 高さ動作パラメータ
 # 待機高さ: NMW では同期するほど下がってくる (色が青→緑になるほど低く、2026-09-09 ユーザー要望)。コモネは従来の固定 2.3
 firefly_z_base_unsynced = vz(2.3) if layout == "fu" else (2.45 if layout == "iamas" else 3.9)   # 位相がずれている(青い)時の待機高さ [m] (IAMAS: コモネ相当)
-firefly_z_base_synced   = vz(2.3) if layout == "fu" else (2.05 if layout == "iamas" else 2.5)   # 揃っている(緑の)時の待機高さ [m] (IAMAS: コモネ-0.4)
+firefly_z_base_synced   = vz(2.3) if layout == "fu" else (2.0 if layout == "iamas" else 2.5)   # 揃っている(緑の)時の待機高さ [m] (IAMAS: 振幅±0.2込みで最低1.8)
 firefly_z_base_smooth   = 1.5     # 待機高さの追従時定数 [s] (スパン拡大に合わせ 0.5→1.5: 実効スルーを従来並みに)
 firefly_z_base = firefly_z_base_unsynced   # トランジション先 (モード開始時の高さ)
 # 高さの振幅: 上下は発光位相(周期 4 s ±20%)に同期するので、振幅/2 × 2π/3.2 s ≤ ウィンチ 0.2 m/s → 振幅 ≤ 0.20 m。

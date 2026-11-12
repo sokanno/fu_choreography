@@ -68,7 +68,7 @@ var robots = robotsFile["robots"].collect { |r|
 ~prDroneGain  = 0.45;   // 壁同期グリッサンドドローン
 ~prRollGain   = 0.0;    // CDJロール層 (全体で1個の刻みは自律感と逆行するのでミュート中。
                         //  序盤1Hzがメトロノームに聞こえる。戻すなら 0.3)
-~prCrushZ     = 1.5;    // 両声が出会う高さ [m] (main.py の press_crush_z と合わせる)
+~prCrushZ     = 2.0;    // 両声が出会う高さ [m] (main.py の press_crush_z と合わせる)
 ~prEchoGain   = 0.9;    // エコー槽の出力 (解放時)
 ~prEchoClosed = 0.10;   // 壁がある間のエコー漏れ (密室感。0で完全に封じる)
 ~prRevClosed  = 3.0;    // 壁がある間の残響時間 [s]
