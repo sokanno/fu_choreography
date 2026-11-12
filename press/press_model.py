@@ -175,9 +175,15 @@ class PressModel:
         self.top_crush = self.crush_z + CRUSH_GAP_M / 2.0
         self.bot_crush = self.crush_z - CRUSH_GAP_M / 2.0
         # 共有ティルト: サイクル開始時に1回だけ決め、潰れるまで固定。
-        # 上下の壁に同じ傾き = 必ず平行。面は部屋中心(=crush_z 1.5m)を支点に傾く
-        if WALL_TILT and self.rng.random() >= TILT_FLAT_P:
-            a = math.radians(self.rng.uniform(TILT_MIN_DEG, TILT_MAX_DEG))
+        # 上下の壁に同じ傾き = 必ず平行。面は部屋中心(=crush_z)を支点に傾く。
+        # 上限は幾何から: 潰し面の端(最遠の筒)が可動域 [min_z, max_z] を出ない角度。
+        # それが TILT_MIN_DEG 未満しか取れない配置なら傾けない (平らで潰す)
+        tilt_room = min(self.crush_z - self.min_z, self.max_z - self.crush_z)
+        tilt_cap = math.degrees(math.atan(max(0.0, tilt_room) / self.r_max))
+        a_hi = min(TILT_MAX_DEG, tilt_cap)
+        if WALL_TILT and a_hi >= TILT_MIN_DEG \
+                and self.rng.random() >= TILT_FLAT_P:
+            a = math.radians(self.rng.uniform(TILT_MIN_DEG, a_hi))
             ph = self.rng.uniform(0.0, 2.0 * math.pi)
             self.tilt_x = math.tan(a) * math.cos(ph)
             self.tilt_y = math.tan(a) * math.sin(ph)
