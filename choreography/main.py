@@ -280,7 +280,7 @@ SOUND_TURN_TIME     = 0.5   # ← ★ 完全に振り向くまでに使える時
 fish_align_factor  = 0.5    # 向きそろえ強度
 # 群全体の平均高さのゆらぎ (2026-09-09, NMW): 基準高さの上に 0〜fish_school_drift_range [m] を Perlin ノイズで上乗せ
 # → 群の動く範囲が上方向に +1m 広がり、平均高さがゆっくり上下する。コモネは 0 で従来どおり
-fish_school_drift_range = 0.0 if layout == "fu" else (1.9 if layout == "iamas" else 1.0)   # [m] (IAMAS: 帯0.5〜3.2mに拡大)
+fish_school_drift_range = 0.0 if layout == "fu" else 1.0   # [m] (IAMAS/NMW: 上方向のゆらぎ+1m)
 fish_base_no_person_nmw = 2.5   # NMW の魚群の基準高さ [m] (人検出なし。帯 = 基準-0.4 〜 基準+1.0+0.4 = 2.1〜3.9m)
 # 天上天下: 位相速度 [rad/s] (すれ違い間隔 = π/速度)。NMW は振幅が大きいので遅め (2026-09-09)
 # 回る天井: 夕焼けで赤くなる側。+1 = +x 端 (コモネ従来)、-1 = -x 端 (NMW では観客から見て奥、2026-09-09)
@@ -292,8 +292,8 @@ plane_rot_speed_scale = 1.0 if layout == "fu" else (0.67 if layout == "iamas" el
 # 回る天井: True なら面が上限 maxZ を超える分だけ面全体を下げ、上側が平らに並ぶのを避ける (コモネは高さ制限ゆえ従来どおりクリップ)
 plane_keep_below_top = (layout != "fu")
 plane_spread_amp = 0.0   # 回る天井の面の高低差の半分 [m] (毎フレーム更新、角速度の制限に使う)
-plane_min_z = minZ if layout == "fu" else (0.5 if layout == "iamas" else 2.0)   # 下限 [m] (NMW:2.0 / IAMAS:0.5=余白空間を全部使う 2026-11-03)
-tenge_speed_init  = 0.7 if layout == "fu" else (0.25 if layout == "iamas" else 0.4)          # 初期値 (IAMAS: 振幅大なので遅め)
+plane_min_z = minZ if layout == "fu" else (1.6 if layout == "iamas" else 2.0)   # 下限 [m] (IAMAS: 基本頭上、NMW-40cm。全域案0.5はピンとこず撤回 2026-11-12)
+tenge_speed_init  = 0.7 if layout == "fu" else 0.4          # 初期値 (fu 4.5 s / 他 7.9 s 間隔)
 # 天上天下: 孤立に戸惑って他の筒を見回す動き (2026-09-29)。Group B の一部だけに付ける。
 # 一定時間ごとに「見る相手」を選び直し、その相手へヨーとピッチを向ける。
 # 相手が自分より高ければ見上げ、低ければ見下ろす形になる。すれ違いのたびに誰が戸惑うか引き直す
@@ -302,8 +302,8 @@ tenge_confused_gaze_s   = (0.5, 1.4)  # 一人を見ている時間 [s] の範�
 tenge_confused_leader_p = 0.35        # 見る相手がリーダー(A)になる確率。A は高さが違うので見上げ/見下ろしになる
 tenge_confused_yaw_dps  = 150.0       # 首を横に振る速さ [度/秒] (回る天井は 45-180 で回しているので余裕内)
 tenge_confused_pitch_dps = 70.0       # 見上げ/見下ろしの速さ [度/秒] (横より落ち着かせる)
-tenge_speed_range = (0.5, 0.8) if layout == "fu" else ((0.2, 0.3) if layout == "iamas" else (0.3, 0.5))   # IAMAS: 最遅が遅すぎたので下限0.15→0.2 (2026-11-03)
-fish_base_no_person = vz(2.0) if layout == "fu" else (0.9 if layout == "iamas" else fish_base_no_person_nmw)   # 人がいない時の基準高さ (IAMAS: 0.9 → 帯0.5〜3.2)
+tenge_speed_range = (0.5, 0.8) if layout == "fu" else (0.3, 0.5)   # すれ違いごとの再抽選範囲
+fish_base_no_person = vz(2.0) if layout == "fu" else (1.6 if layout == "iamas" else fish_base_no_person_nmw)   # 人がいない時の基準高さ (IAMAS: コモネ2.0-0.4 → 帯1.2〜3.0)
 # 魚群: はぐれ個体 (2026-11-03) — 時折1匹が群れを離れ、ポツポツと合流する奴が増え、
 # やがて強い波が来て全体の動きに飲み込まれて戻る
 fish_stray_interval  = (25.0, 50.0)  # はぐれ発生の間隔 [s]
@@ -493,8 +493,8 @@ firefly_sync_memory = 0.95          # 同期率の移動平均係数（大きい
 
 # 高さ動作パラメータ
 # 待機高さ: NMW では同期するほど下がってくる (色が青→緑になるほど低く、2026-09-09 ユーザー要望)。コモネは従来の固定 2.3
-firefly_z_base_unsynced = vz(2.3) if layout == "fu" else (3.0 if layout == "iamas" else 3.9)   # 位相がずれている(青い)時の待機高さ [m] (IAMAS: 3.0)
-firefly_z_base_synced   = vz(2.3) if layout == "fu" else (0.8 if layout == "iamas" else 2.5)   # 揃っている(緑の)時の待機高さ [m] (IAMAS: 0.8、スパン2.2m)
+firefly_z_base_unsynced = vz(2.3) if layout == "fu" else (2.45 if layout == "iamas" else 3.9)   # 位相がずれている(青い)時の待機高さ [m] (IAMAS: コモネ相当)
+firefly_z_base_synced   = vz(2.3) if layout == "fu" else (2.05 if layout == "iamas" else 2.5)   # 揃っている(緑の)時の待機高さ [m] (IAMAS: コモネ-0.4)
 firefly_z_base_smooth   = 1.5     # 待機高さの追従時定数 [s] (スパン拡大に合わせ 0.5→1.5: 実効スルーを従来並みに)
 firefly_z_base = firefly_z_base_unsynced   # トランジション先 (モード開始時の高さ)
 # 高さの振幅: 上下は発光位相(周期 4 s ±20%)に同期するので、振幅/2 × 2π/3.2 s ≤ ウィンチ 0.2 m/s → 振幅 ≤ 0.20 m。
@@ -3060,7 +3060,7 @@ while True:
         # max_height = 2.2  # 物理的制約により固定
         # min_height = 1.0  # 人がいない場合の最低高さ
         max_height = (maxZ - 0.1) if layout == "iamas" else vz(2.75)  # IAMAS: 3.1 まで
-        min_height = vz(1.85) if layout == "fu" else (0.5 if layout == "iamas" else 2.35)  # 最低高さ (IAMAS: 0.5)
+        min_height = vz(1.85) if layout == "fu" else (1.45 if layout == "iamas" else 2.35)  # 最低高さ (IAMAS: コモネ1.85-0.4)
         # 振幅は max_height - center_z まで抽選されるので、上下動はちょうど min_height〜max_height を使う
         center_z = (max_height + min_height) / 2  # 中間点を動的に計算
         # 人がいるかどうかを確認
