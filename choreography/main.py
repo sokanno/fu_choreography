@@ -54,6 +54,8 @@ except Exception as _e:
 # 潰し切る高さ [m]。z_anchor(2.0) 以下の人基準の高さなので全会場共通 (vz不要)
 press_crush_z = 2.45  # 潰し高さ [m] (帯1.8〜3.1の中央。傾斜±12°が取れる 2026-11-13)
 press_min_z   = 1.8   # 縮む部屋の床 [m] (全コレオ共通の床1.8 2026-11-12)
+idle_cloud_max  = 0.10  # 待機モード: 雲の明るさ上限 (0〜10%)
+presence_hold_s = 5.0   # 最後に人を見てからこれだけの間は「いる」扱い (フリッカ防止)
 # 色: ストレス0=のんびり青 → 1=焦りの赤 (モデルのstressで補間)。
 # 解放後は安堵の暖色、休息はさらに暗く。バウンス発光は白
 press_col_calm  = (0.13, 0.30, 0.55)
@@ -690,7 +692,8 @@ modes = ["マニュアルモード",
          "The two of us",
          "見えない蝶々モード",
          "陣取りモード",
-         "縮む部屋"]
+         "縮む部屋",
+         "待機モード"]   # 鑑賞者不在のアイドル (/menu 10)。Max autoplay が人感で出し入れする
         #  "舞台挨拶モード"]
 mode_menu = menu(
     choices=modes,
@@ -2213,6 +2216,10 @@ if client is None:
 
 
 sim_time = noise_time = 0.0
+# 鑑賞者presence: "ca"(観客座標)に人がいれば更新。専用トピックができたら下のMQTTループに追加
+presence_last_seen = -1e9
+presence_state = False
+presence_last_sent = -1e9
 angle = cameraAngle   # 3Dカメラ方位 (rotationSpeed=0 なら固定)
 dt = 1/20
 # 生存ノードから初期Group Aを選択（起動直後はheartbeat未着のためfallback）
@@ -2300,7 +2307,7 @@ while True:
     # 縮む部屋→次シーンは拡散の余韻からそのままグラデーションさせたいので、
     # これらのシーン中に来た menu 0 は4秒保留し、続く本命シーンへ直接切り替える
     if menu_index != mode_menu.index:
-        if menu_index == 0 and mode_menu.selected in ("陣取りモード", "縮む部屋"):
+        if menu_index == 0 and mode_menu.selected in ("陣取りモード", "縮む部屋", "待機モード"):
             if not hasattr(mode_menu, 'menu0_hold_until'):
                 mode_menu.menu0_hold_until = sim_time + 4.0
             if sim_time >= mode_menu.menu0_hold_until:
@@ -2319,6 +2326,8 @@ while True:
     for msg in fetch_messages():
         if msg["topic"] == "ca":
             handle_audience(msg["coords"])
+            if msg["coords"]:
+                presence_last_seen = sim_time   # 人を検出 (専用トピック導入時もここに合流させる)
         elif msg["topic"] == "ss":
             # ← ここでグローバルに記録
             last_sound_coords = msg["coords"]
@@ -6647,6 +6656,29 @@ while True:
             update_downlight_display(ag)
             send_queue.put(ag)
 
+    elif mode_menu.selected == "待機モード":
+        # 鑑賞者がいない間の待機: 定位置(天井)へゆっくり戻って静止し、
+        # Perlinノイズの雲が 0〜idle_cloud_max の明るさでうっすら流れる (完全消灯にしない)
+        for ag in agents:
+            ag.autonomous_mode = False
+            _dz = maxZ - ag.z
+            _v = winch_max_speed_mps * dt
+            ag.z += max(-_v, min(_v, _dz))
+            ag.pitch += (0.0 - ag.pitch) * min(1.0, dt / 2.0)
+            _n = pnoise2(ag.x * 0.25 + sim_time * 0.04,
+                         ag.y * 0.25 + sim_time * 0.013)
+            _b = idle_cloud_max * max(0.0, min(1.0, _n * 0.5 + 0.5))
+            _c = vector(_b * 0.85, _b * 0.92, _b)   # わずかに青白い雲
+            ag.current_color = _c
+            ag.body.color = _c
+            for _ld3, _ld2, _ in ag.leds:
+                _ld3.color = _ld2.color = _c
+            ag.target_downlight = 0.0
+            update_geometry(ag)
+            ag.display()
+            update_downlight_display(ag)
+            send_queue.put(ag)
+
     elif mode_menu.selected == "マニュアルモード":
         # マニュアルモードの処理
         process_manual_commands()
@@ -6662,6 +6694,15 @@ while True:
 
     # 音に対するインタラクティブモード
     apply_sound_reaction()     # ★追加★
+
+    # 鑑賞者presence → Max autoplay へ (/presence 1/0。変化時+5秒ごとのキープアライブ)
+    _pnow = (sim_time - presence_last_seen) < presence_hold_s
+    if _pnow != presence_state or (sim_time - presence_last_sent) > 5.0:
+        if _pnow != presence_state:
+            print(f"[presence] {'検出' if _pnow else '不在'} → Max")
+        presence_state = _pnow
+        presence_last_sent = sim_time
+        osc_client_max.send_message('/presence', 1 if _pnow else 0)
 
     # 3Dカメラ軌道更新
     camX = centerX + radius * math.cos(angle)
