@@ -435,7 +435,9 @@ twofus_hesitate_pause_s = (0.8, 2.0)     # 下がった後に止まる時間 [s]
 
 # 向き合う: 降りきってから GridEye(自律モード)を有効にする (2026-09-28)。
 # 以前はシーンに入った瞬間に at=1 を立てていたので、まだ天井にいるうちから人を追い始めていた。
-facing_z_range           = (2.2, 2.35) # 降下先の高さ [m] の範囲 (2026-09-28: 現場で計40cm上げ 1.8-1.95→2.2-2.35)。
+facing_z_range           = (1.7, 1.95) if layout == "iamas" else (2.2, 2.35) # 降下先の高さ [m] の範囲。
+                                       # IAMAS: 向き合うだけ例外的に1.7まで (全コレオ床1.8の例外、2026-11-12)。
+                                       # NMW: 現場で計40cm上げ 1.8-1.95→2.2-2.35。
                                        # 人基準の実寸。vz() は通さない (2.0 を超えると会場スケールで引き伸ばされるため。fu では vz は恒等)
 facing_arrive_margin_m   = 0.05         # 目標にこれだけ近づいたら到着とみなす [m]
 facing_descend_pitch_deg = 0.0          # 降下中のピッチ [度] (到着後は 90 = 自律制御の合図)
@@ -1578,7 +1580,9 @@ agents = []
 with open(node_file, newline="") as f:
     for k, row in enumerate(csv.DictReader(f)):
         i, j = divmod(k, COLS)
-        z = random.uniform(minZ + agent_length/2, maxZ - agent_length/2)
+        # IAMAS: 起動時から全コレオ共通の床1.8より上に置く (下から這い上がる絵を避ける)
+        _z_floor = 1.8 if layout == "iamas" else minZ
+        z = random.uniform(_z_floor + agent_length/2, maxZ - agent_length/2)
         node_x, node_y = float(row["x"]), float(row["y"])
         # iamas: 配置キープラン(U-01)でユニットは東西向き = node_nmw.csv の向きそのまま (+x=東)。回転不要 (2026-10-22)
         # row["id"] に加えて、enumerate の k を idx として渡す
