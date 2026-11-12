@@ -52,7 +52,7 @@ except Exception as _e:
     print(f"[press] import失敗（縮む部屋モードは無効）: {_e}")
     PRESS_AVAILABLE = False
 # 潰し切る高さ [m]。z_anchor(2.0) 以下の人基準の高さなので全会場共通 (vz不要)
-press_crush_z = 2.0   # 潰し高さ [m] (床1.8の上。2026-11-12)
+press_crush_z = 2.45  # 潰し高さ [m] (帯1.8〜3.1の中央。傾斜±12°が取れる 2026-11-13)
 press_min_z   = 1.8   # 縮む部屋の床 [m] (全コレオ共通の床1.8 2026-11-12)
 # 色: ストレス0=のんびり青 → 1=焦りの赤 (モデルのstressで補間)。
 # 解放後は安堵の暖色、休息はさらに暗く。バウンス発光は白
@@ -139,7 +139,7 @@ cameraAngle      = (-math.pi/2 - math.radians(26)) if layout == "iamas" else 0.0
 # (send_robot_data)。会場が変わったらこの1つだけ測り直せばよい。
 venue_back_bearing_deg = 170.0   # 観客から見て「奥」の方位 [度]。NMW: 170 = 南
 radius           = 7.0 if layout == "iamas" else 5.5   # 3Dカメラの作品中心からの距離 [m]。iamas: 少し引いた画角 (2026-10-22)
-cameraHeight     = 2.0        # = press_crush_z (潰れる高さと同じ目線。元: 1.0)
+cameraHeight     = 2.45       # = press_crush_z (潰れる高さと同じ目線。元: 1.0)
 
 noiseScale   = 0.01
 noiseSpeed   = 0.01
