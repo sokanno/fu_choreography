@@ -53,6 +53,7 @@ except Exception as _e:
     PRESS_AVAILABLE = False
 # 潰し切る高さ [m]。z_anchor(2.0) 以下の人基準の高さなので全会場共通 (vz不要)
 press_crush_z = 1.5   # 潰し高さ: 目の高さくらい
+press_min_z   = 1.45  # 縮む部屋の床 [m] (IAMAS: 基本下に人が入れるよう頭上基調に 2026-11-12。全域0.39は撤回)
 # 色: ストレス0=のんびり青 → 1=焦りの赤 (モデルのstressで補間)。
 # 解放後は安堵の暖色、休息はさらに暗く。バウンス発光は白
 press_col_calm  = (0.13, 0.30, 0.55)
@@ -280,7 +281,7 @@ SOUND_TURN_TIME     = 0.5   # ← ★ 完全に振り向くまでに使える時
 fish_align_factor  = 0.5    # 向きそろえ強度
 # 群全体の平均高さのゆらぎ (2026-09-09, NMW): 基準高さの上に 0〜fish_school_drift_range [m] を Perlin ノイズで上乗せ
 # → 群の動く範囲が上方向に +1m 広がり、平均高さがゆっくり上下する。コモネは 0 で従来どおり
-fish_school_drift_range = 0.0 if layout == "fu" else 1.0   # [m] (IAMAS/NMW: 上方向のゆらぎ+1m)
+fish_school_drift_range = 0.0 if layout == "fu" else (0.4 if layout == "iamas" else 1.0)   # [m] (IAMAS: 帯1.2〜2.4=コモネ帯+下40cmに収める)
 fish_base_no_person_nmw = 2.5   # NMW の魚群の基準高さ [m] (人検出なし。帯 = 基準-0.4 〜 基準+1.0+0.4 = 2.1〜3.9m)
 # 天上天下: 位相速度 [rad/s] (すれ違い間隔 = π/速度)。NMW は振幅が大きいので遅め (2026-09-09)
 # 回る天井: 夕焼けで赤くなる側。+1 = +x 端 (コモネ従来)、-1 = -x 端 (NMW では観客から見て奥、2026-09-09)
@@ -3059,8 +3060,8 @@ while True:
         # ─────────────────────────────────────────────
         # max_height = 2.2  # 物理的制約により固定
         # min_height = 1.0  # 人がいない場合の最低高さ
-        max_height = (maxZ - 0.1) if layout == "iamas" else vz(2.75)  # IAMAS: 3.1 まで
-        min_height = vz(1.85) if layout == "fu" else (1.45 if layout == "iamas" else 2.35)  # 最低高さ (IAMAS: コモネ1.85-0.4)
+        max_height = 2.75 if layout == "iamas" else vz(2.75)  # IAMAS: コモネ上限を実寸で (vz伸長だと3.1まで広がりすぎる)
+        min_height = vz(1.85) if layout == "fu" else (1.85 if layout == "iamas" else 2.35)  # 最低高さ (IAMAS: コモネ実寸。-0.4案は降りすぎで撤回 2026-11-12)
         # 振幅は max_height - center_z まで抽選されるので、上下動はちょうど min_height〜max_height を使う
         center_z = (max_height + min_height) / 2  # 中間点を動的に計算
         # 人がいるかどうかを確認
@@ -6523,7 +6524,7 @@ while True:
             mode_menu.press_model = PressModel(
                 [(ag.x - centerX, ag.y - centerY) for ag in agents],
                 [ag.z for ag in agents],
-                min_z=minZ, max_z=maxZ, crush_z=press_crush_z,
+                min_z=max(minZ, press_min_z), max_z=maxZ, crush_z=press_crush_z,
                 winch_speed=winch_max_speed_mps, agent_length=agent_length)
             mode_menu.press_frame = 0
             mode_menu.press_active = True
