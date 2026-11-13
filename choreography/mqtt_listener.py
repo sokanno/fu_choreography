@@ -37,7 +37,8 @@ KEEPALIVE    = 60            # sec
 
 # 購読トピック (topic, qos)
 TOPICS: List[Tuple[str, int]] = [
-    ("ca", 0),   # coordinate of audience
+    ("ca", 0),   # coordinate of audience (v1: 人ごと4B = >hh x_cm,y_cm。空=0人)
+    ("ca2", 0),  # coordinate of audience (v2: 人ごと6B = >Hhh id,x_cm,y_cm。空=0人)
     ("ss", 0),   # sound source
 ]
 
@@ -82,6 +83,18 @@ def on_message(client, userdata, msg):
             logging.debug(f"[MQTT] {msg.topic} -> 0 person")
             return                    # これ以上の処理は不要
         # ---- ここまで ----
+        if msg.topic == "ca2":
+            # v2: id(uint16) + x_cm + y_cm の6バイト/人
+            if len(msg.payload) % 6 != 0:
+                raise ValueError(f"unexpected v2 length {len(msg.payload)}")
+            rows = list(struct.iter_unpack(">Hhh", msg.payload))
+            msg_queue.put({
+                "topic"  : msg.topic,
+                "coords" : [(x / 100.0, y / 100.0) for _, x, y in rows],
+                "ids"    : [i for i, _, _ in rows],
+                "time"   : time.time(),
+            })
+            return
         # 4 の倍数でなければ不正
         if len(msg.payload) == 0 or len(msg.payload) % 4 != 0:
             raise ValueError(f"unexpected length {len(msg.payload)}")

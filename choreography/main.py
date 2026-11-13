@@ -2327,7 +2327,13 @@ while True:
         if msg["topic"] == "ca":
             handle_audience(msg["coords"])
             if msg["coords"]:
-                presence_last_seen = sim_time   # 人を検出 (専用トピック導入時もここに合流させる)
+                presence_last_seen = sim_time   # 人を検出 → 待機解除のトリガー
+        elif msg["topic"] == "ca2":
+            # RealSense送信側のv2 (ID付き)。presence判定には今から使う。
+            # 演出へのID対応(並び順→idキー化・caの購読外し)は受信側4点作業として
+            # v2本切替のタイミングで実施する (realsense-mqtt-prompt-final.md 参照)
+            if msg["coords"]:
+                presence_last_seen = sim_time
         elif msg["topic"] == "ss":
             # ← ここでグローバルに記録
             last_sound_coords = msg["coords"]
