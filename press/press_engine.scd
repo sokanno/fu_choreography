@@ -65,7 +65,7 @@ var robots = robotsFile["robots"].collect { |r|
 ~prBounceGain = 0.55;   // バウンス打音
 ~prEchoSend   = 0.55;   // 打音からエコー槽への送り
 ~prAirGain    = 0.16;   // 圧力ドローン
-~prDroneGain  = 0.45;   // 壁同期グリッサンドドローン
+~prDroneGain  = 0.127;  // 壁同期グリッサンドドローン (IAMAS: 0.45→半分→さらに-5dB 2026-11-13)
 ~prRollGain   = 0.0;    // CDJロール層 (全体で1個の刻みは自律感と逆行するのでミュート中。
                         //  序盤1Hzがメトロノームに聞こえる。戻すなら 0.3)
 ~prCrushZ     = 2.45;   // 両声が出会う高さ [m] (main.py の press_crush_z と合わせる)

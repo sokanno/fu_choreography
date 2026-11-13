@@ -54,7 +54,9 @@ except Exception as _e:
 # 潰し切る高さ [m]。z_anchor(2.0) 以下の人基準の高さなので全会場共通 (vz不要)
 press_crush_z = 2.45  # 潰し高さ [m] (帯1.8〜3.1の中央。傾斜±12°が取れる 2026-11-13)
 press_min_z   = 1.8   # 縮む部屋の床 [m] (全コレオ共通の床1.8 2026-11-12)
-idle_cloud_max  = 0.10  # 待機モード: 雲の明るさ上限 (0〜10%)
+idle_cloud_min  = 0.05  # 待機モード: 雲の明るさ下限 (0%付近はLEDの段差が目立つので底上げ 2026-11-13)
+idle_cloud_max  = 0.20  # 待機モード: 雲の明るさ上限 (純白で5〜20%。2026-11-13)
+idle_dither     = True  # 待機モード: LED 8bit の段差を時間ディザでならす (暗い域は256段だと数段しかない)
 presence_hold_s = 5.0   # 最後に人を見てからこれだけの間は「いる」扱い (フリッカ防止)
 # 色: ストレス0=のんびり青 → 1=焦りの赤 (モデルのstressで補間)。
 # 解放後は安堵の暖色、休息はさらに暗く。バウンス発光は白
@@ -62,6 +64,10 @@ press_col_calm  = (0.13, 0.30, 0.55)
 press_col_alarm = (0.72, 0.10, 0.07)
 press_base_warm = (0.43, 0.38, 0.29)
 press_base_rest = (0.18, 0.19, 0.23)
+# 普段の地色の明るさ (1=従来)。打たれた発光・潰しの白熱は従来の明るさまで上がるので、暗くするほど当たりが際立つ (IAMAS 2026-11-13)
+press_base_dim  = 0.25
+press_bri_attack_s  = 0.12  # 明るさが上がるときの追従時間 [s]
+press_bri_release_s = 0.6   # 下がるときの追従時間 [s]
 
 #=========================================================
 # ここはどこか
@@ -223,6 +229,7 @@ step_yaw_angle_min    = 30.0          # 1ステップの回転角度の最小値
 step_yaw_angle_max    = 180.0         # 1ステップの回転角度の最大値（度）
 step_yaw_speed_base   = 90.0          # 自転回転速度の基準値（度/秒）
 step_yaw_speed_dps    = 90.0          # 自転回転速度（実行時にランダム決定）
+ceiling_look_prob     = 0.5           # 人を検出中、ステップ回転のうちこの割合で全員がその人の方を向く (2026-11-13)
 
 # グローバルステート（全筒共有）
 step_yaw_state        = "waiting"     # "waiting" or "rotating"
@@ -288,6 +295,8 @@ fish_base_no_person_nmw = 2.5   # NMW の魚群の基準高さ [m] (人検出な
 # 天上天下: 位相速度 [rad/s] (すれ違い間隔 = π/速度)。NMW は振幅が大きいので遅め (2026-09-09)
 # 回る天井: 夕焼けで赤くなる側。+1 = +x 端 (コモネ従来)、-1 = -x 端 (NMW では観客から見て奥、2026-09-09)
 sunset_x_sign = 1.0 if layout == "fu" else -1.0
+# 夕焼け側の向き (平面図で、上の x 端から反時計回りに何度回すか)。IAMAS: -x 端から反時計回り90° = -y 端 (2026-11-13)
+sunset_rot_deg = 90.0 if layout == "iamas" else 0.0
 # 回る天井: 空の色彩サイクル(夜→朝→昼→夕→夜)の1日の長さ [s] (2026-09-28: 120→150)
 ceiling_day_length_s = 150.0
 # 回る天井: 面の回転速度の倍率。NMW は高低差が vdz で約2.9倍になり各筒の上下が速く見えるので半分に (2026-09-09)
@@ -1880,9 +1889,17 @@ def send_robot_data(agent):
     mqtt_client.publish(f"ps/{agent.node_id}", payload_pos)
 
     # 色は従来どおり
-    r = int(agent.current_color.x * 255)
-    g = int(agent.current_color.y * 255)
-    b = int(agent.current_color.z * 255)
+    if idle_dither and mode_menu.selected == "待機モード":
+        # 時間ディザ: 毎フレーム端数を確率で切り上げ、平均で 256段より細かい明るさを出す
+        # RGB に同じ乱数を使う (別々だと一瞬だけ色味がずれてチラつく)
+        _d = random.random()
+        r = min(255, int(agent.current_color.x * 255 + _d))
+        g = min(255, int(agent.current_color.y * 255 + _d))
+        b = min(255, int(agent.current_color.z * 255 + _d))
+    else:
+        r = int(agent.current_color.x * 255)
+        g = int(agent.current_color.y * 255)
+        b = int(agent.current_color.z * 255)
     mqtt_client.publish(f"cl/{agent.node_id}", bytes([r, g, b]))
 
     # ダウンライト
@@ -2557,8 +2574,17 @@ while True:
                 delta_deg = random.uniform(step_yaw_angle_min, step_yaw_angle_max)
                 direction = random.choice([1, -1])
                 step_yaw_delta = delta_deg * direction
+                _look = random.choice(audiences) if (presence_state and audiences
+                                                     and random.random() < ceiling_look_prob) else None
                 for ag in agents:
-                    ag.step_yaw_target = ag.yaw + step_yaw_delta
+                    if _look is not None:
+                        # 検出中の人の方へ (最短の回り方で)
+                        _ty = degrees(math.atan2(_look.y - ag.y, _look.x - ag.x))
+                        ag.step_yaw_target = ag.yaw + ((_ty - ag.yaw + 540) % 360) - 180
+                    else:
+                        ag.step_yaw_target = ag.yaw + step_yaw_delta
+                if _look is not None:
+                    print(f"[自転ステップ] 人の方へ向く: ({_look.x:.2f}, {_look.y:.2f})")
                 step_yaw_speed_dps = random.uniform(step_yaw_speed_base * 0.5, step_yaw_speed_base * 2.0)
                 step_yaw_state = "rotating"
                 print(f"[自転ステップ] 全員回転開始: {step_yaw_delta:+.1f}° @ {step_yaw_speed_dps:.0f}°/s")
@@ -2853,7 +2879,10 @@ while True:
                     sunset_time_t = 1.0 - (day_time - 0.72) / 0.13
                 sunset_time_t = max(0.0, min(1.0, sunset_time_t))
                 # x座標によるグラデーション（sunset_x_sign 側の端ほど強い: 中心で0, 配置の端で1.0）
-                sunset_x_t = max(0.0, sunset_x_sign * (ag.x - centerX) / max(0.1, (maxX - minX) / 2))
+                _sa = math.radians(sunset_rot_deg)
+                _sdx, _sdy = sunset_x_sign * math.cos(_sa), sunset_x_sign * math.sin(_sa)
+                _shalf = abs(_sdx) * (maxX - minX) / 2 + abs(_sdy) * (maxY - minY) / 2
+                sunset_x_t = max(0.0, min(1.0, (_sdx * (ag.x - centerX) + _sdy * (ag.y - centerY)) / max(0.1, _shalf)))
                 sunset_strength = sunset_time_t * sunset_x_t * 0.9  # 最大90%ブレンド
                 # 夕焼け色（暖かいオレンジ〜赤）
                 sunset_r, sunset_g, sunset_b = 0.95, 0.25, 0.05
@@ -6549,6 +6578,7 @@ while True:
             mode_menu.press_frame = 0
             mode_menu.press_active = True
             mode_menu.press_cols = [vector(*press_col_calm) for _ in agents]
+            mode_menu.press_bri = [press_base_dim for _ in agents]   # 明るさ倍率 (平滑化後)
             try:
                 mode_menu.press_client = PressClient()
                 mode_menu.press_client.scene(True)
@@ -6648,7 +6678,12 @@ while True:
             # バウンスの瞬間は白ではなく「その時の固有色」のまま明るく発光。
             # 増光は控えめ (×1.9): 最大の明るさ=白は潰しの白熱に取っておく
             _f = min(1.0, pm.flash[k_ag])
-            _b = 1.0 + 0.9 * _f
+            _lvl = press_base_dim + (1.0 - press_base_dim) * max(_f, min(1.0, _h))
+            _bt = _lvl * (1.0 + 0.9 * _f)
+            # 明るさは段差なく: 上がるのは速く(0.12秒)、下がるのはゆっくり(0.6秒)追従
+            _b = mode_menu.press_bri[k_ag]
+            _b += (_bt - _b) * min(1.0, dt / (press_bri_attack_s if _bt > _b else press_bri_release_s))
+            mode_menu.press_bri[k_ag] = _b
             press_color = vector(min(1.0, _c.x * _b),
                                  min(1.0, _c.y * _b),
                                  min(1.0, _c.z * _b))
@@ -6674,8 +6709,10 @@ while True:
             ag.pitch += (0.0 - ag.pitch) * min(1.0, dt / 2.0)
             _n = pnoise2(ag.x * 0.25 + sim_time * 0.04,
                          ag.y * 0.25 + sim_time * 0.013)
-            _b = idle_cloud_max * max(0.0, min(1.0, _n * 0.5 + 0.5))
-            _c = vector(_b * 0.85, _b * 0.92, _b)   # わずかに青白い雲
+            # ノイズ(実測 ±0.55)を 0〜1 に広げ、smoothstep で山と谷をなだらかに
+            _t = max(0.0, min(1.0, _n * 0.9 + 0.5))
+            _b = idle_cloud_min + (idle_cloud_max - idle_cloud_min) * _t * _t * (3.0 - 2.0 * _t)
+            _c = vector(_b, _b, _b)   # 純白 (RGBがずれると色がチラつくので揃える 2026-11-13)
             ag.current_color = _c
             ag.body.color = _c
             for _ld3, _ld2, _ in ag.leds:
@@ -6703,7 +6740,8 @@ while True:
     apply_sound_reaction()     # ★追加★
 
     # 鑑賞者presence → Max autoplay へ (/presence 1/0。変化時+5秒ごとのキープアライブ)
-    _pnow = (sim_time - presence_last_seen) < presence_hold_s
+    # UI.maxpat の「観客検出」トグルが OFF なら常に「いる」扱い (仕上げ中に待機へ落ちないように)
+    _pnow = (sim_time - presence_last_seen) < presence_hold_s or params["presence_enable"] < 0.5
     if _pnow != presence_state or (sim_time - presence_last_sent) > 5.0:
         if _pnow != presence_state:
             print(f"[presence] {'検出' if _pnow else '不在'} → Max")
