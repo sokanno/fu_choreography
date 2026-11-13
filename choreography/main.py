@@ -8,7 +8,7 @@ scene.visible = False
 scene.width = scene.height = 0
 
 import math, random, struct, csv, time, json
-from noise import pnoise2, pnoise1
+from noise import pnoise2, pnoise1, pnoise3
 import paho.mqtt.client as mqtt
 
 import colorsys
@@ -56,6 +56,9 @@ press_crush_z = 2.45  # 潰し高さ [m] (帯1.8〜3.1の中央。傾斜±12°�
 press_min_z   = 1.8   # 縮む部屋の床 [m] (全コレオ共通の床1.8 2026-11-12)
 idle_cloud_min  = 0.05  # 待機モード: 雲の明るさ下限 (0%付近はLEDの段差が目立つので底上げ 2026-11-13)
 idle_cloud_max  = 0.20  # 待機モード: 雲の明るさ上限 (純白で5〜20%。2026-11-13)
+idle_cloud_scale = 0.08  # 待機モード: 雲の細かさ [1/m] (0.08 ≒ 差し渡し9〜12mの雲。小さいほど大きな塊で同期する)
+idle_cloud_speed = 0.45  # 待機モード: 雲が流れる速さ [m/s]
+idle_cloud_dir_deg = 35.0  # 待機モード: 雲が流れる向き [deg] (+x から反時計回り)
 idle_dither     = True  # 待機モード: LED 8bit の段差を時間ディザでならす (暗い域は256段だと数段しかない)
 presence_hold_s = 5.0   # 最後に人を見てからこれだけの間は「いる」扱い (フリッカ防止)
 # 色: ストレス0=のんびり青 → 1=焦りの赤 (モデルのstressで補間)。
@@ -6707,10 +6710,14 @@ while True:
             _v = winch_max_speed_mps * dt
             ag.z += max(-_v, min(_v, _dz))
             ag.pitch += (0.0 - ag.pitch) * min(1.0, dt / 2.0)
-            _n = pnoise2(ag.x * 0.25 + sim_time * 0.04,
-                         ag.y * 0.25 + sim_time * 0.013)
-            # ノイズ(実測 ±0.55)を 0〜1 に広げ、smoothstep で山と谷をなだらかに
-            _t = max(0.0, min(1.0, _n * 0.9 + 0.5))
+            # 大きな雲が一方向へ流れ過ぎる: 座標を流れの分だけずらし、3軸目の時間で形もゆっくり変える。
+            # 近くの筒は同じ雲に入るのでブロック状にそろって明滅する (2026-11-13。旧: 筒ごとにばらばら)
+            _sa = math.radians(idle_cloud_dir_deg)
+            _n = pnoise3((ag.x - idle_cloud_speed * math.cos(_sa) * sim_time) * idle_cloud_scale,
+                         (ag.y - idle_cloud_speed * math.sin(_sa) * sim_time) * idle_cloud_scale,
+                         sim_time * 0.03)
+            # 低周波のノイズは振れ幅が小さいので強めに広げ、smoothstep で山と谷をなだらかに
+            _t = max(0.0, min(1.0, _n * 1.3 + 0.5))
             _b = idle_cloud_min + (idle_cloud_max - idle_cloud_min) * _t * _t * (3.0 - 2.0 * _t)
             _c = vector(_b, _b, _b)   # 純白 (RGBがずれると色がチラつくので揃える 2026-11-13)
             ag.current_color = _c
