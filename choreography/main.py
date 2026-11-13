@@ -309,6 +309,7 @@ tenge_speed_range = (0.5, 0.8) if layout == "fu" else (0.3, 0.5)   # すれ違�
 fish_base_no_person = vz(2.0) if layout == "fu" else (2.2 if layout == "iamas" else fish_base_no_person_nmw)   # 人がいない時の基準高さ (IAMAS: 帯1.8〜3.0、床1.8)
 # 魚群: はぐれ個体 (2026-11-03) — 時折1匹が群れを離れ、ポツポツと合流する奴が増え、
 # やがて強い波が来て全体の動きに飲み込まれて戻る
+fish_stray_enabled   = False         # 2026-11-13「なしにしましょう」で無効化 (仕組みは残置)
 fish_stray_interval  = (25.0, 50.0)  # はぐれ発生の間隔 [s]
 fish_stray_offset_m  = 1.1           # 群れからの離れ幅 [m] (空いている側へ)
 fish_stray_recruit_s = (4.0, 9.0)    # 合流チェックの間隔 [s]
@@ -3597,7 +3598,7 @@ while True:
             fish_school_drift = fish_school_drift_range * (_n + 1.0) / 2.0
 
             # ── はぐれ個体の状態機械: 離脱 → ポツポツ合流 → 強い波に飲まれて帰還 ──
-            if getattr(mode_menu, 'fish_mode_initialized', False):
+            if fish_stray_enabled and getattr(mode_menu, 'fish_mode_initialized', False):
                 _st = getattr(mode_menu, 'fish_stray_state', 'none')
                 if _st == "none":
                     mode_menu.fish_wave_surge = 1.0
